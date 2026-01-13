@@ -63,7 +63,7 @@ impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
 
 struct WriteAsUWrite<'w, W: Write>(&'w mut W);
 
-impl<'w, W: Write> uWrite for WriteAsUWrite<'w, W> {
+impl<W: Write> uWrite for WriteAsUWrite<'_, W> {
     type Error = std::fmt::Error;
 
     fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
@@ -132,7 +132,7 @@ fn extract_type_unit_and_name(
     ctx.unit = get_unit_suffixes(metric.unit());
 
     ctx.name.clear();
-    let Ok(_) = write_sanitized_name(&mut ctx.name, metric.name());
+    let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name());
     if let Some(ref unit) = ctx.unit {
         ctx.name.push('_');
         ctx.name.push_str(unit);
@@ -141,7 +141,7 @@ fn extract_type_unit_and_name(
     true
 }
 
-/// Gets the OpenMetrics metric type for this [AggregatedMetrics].
+/// Gets the OpenMetrics metric type for this [`AggregatedMetrics`].
 /// Returns `Err(())` for unsupported metric types.
 fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
     fn get_metric_data_type<T>(metric_data: &MetricData<T>) -> Result<&'static str, ()> {
@@ -171,7 +171,7 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
     }
 }
 
-/// Write the current metric's metadata. Make sure to call [extract_type_unit_and_name] first.
+/// Write the current metric's metadata. Make sure to call [`extract_type_unit_and_name`] first.
 #[inline]
 fn write_header<U: uWrite>(ctx: &mut Context<'_, U>, description: &str) -> Result<(), U::Error> {
     let Context {
@@ -196,7 +196,7 @@ fn write_header<U: uWrite>(ctx: &mut Context<'_, U>, description: &str) -> Resul
     Ok(())
 }
 
-/// Write a otel_scope metric of type info for all scopes in `metrics`
+/// Write a `otel_scope` metric of type info for all scopes in `metrics`
 /// according to the [spec](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#instrumentation-scope-1).
 #[cfg(feature = "otel_scope_info")]
 fn write_otel_scope_info<U: uWrite>(
@@ -390,7 +390,6 @@ fn write_counter<T: FastDisplay + Copy, U: uWrite>(
                 ts,
             )?;
         }
-        Ok(())
     } else {
         for point in points {
             attrs.clear();
@@ -404,8 +403,8 @@ fn write_counter<T: FastDisplay + Copy, U: uWrite>(
                 ts,
             )?;
         }
-        Ok(())
     }
+    Ok(())
 }
 
 fn write_gauge<T: FastDisplay + Copy, U: uWrite>(
@@ -433,7 +432,7 @@ fn write_gauge<T: FastDisplay + Copy, U: uWrite>(
 }
 
 /// Makes an `otel_scope_name` attribute with the specified `scope_name` if the `otel_scope_info` feature is active.
-#[inline(always)]
+#[inline]
 fn make_scope_name_attrs(scope_name: &str) -> Option<KeyValue> {
     if cfg!(feature = "otel_scope_info") {
         Some(KeyValue::new("otel_scope_name", scope_name.to_owned()))
@@ -472,7 +471,7 @@ fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
     Ok(())
 }
 
-/// Calculates a hash of the [KeyValue] pairs which is invariant under reordering of the [KeyValue]s within the [Iterator].
+/// Calculates a hash of the [`KeyValue`] pairs which is invariant under reordering of the [`KeyValue`]s within the [`Iterator`].
 fn hash_attrs<'a, I: Iterator<Item = &'a KeyValue>>(attrs: I) -> u64 {
     let mut hash = 0;
     for kv in attrs {
@@ -517,29 +516,29 @@ fn write_escaped<U: uWrite>(f: &mut U, value: &str) -> Result<(), U::Error> {
 /// [spec](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#metric-metadata-1).
 fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str) -> Result<(), U::Error> {
     // Multiple consecutive `_` characters MUST be replaced with a single `_` character
-    let mut last_is_underscore = false;
+    let mut previous_was_underscore = false;
     // The name must not start with a digit
     if name.starts_with(|c: char| c.is_ascii_digit()) {
         f.write_char('_')?;
-        last_is_underscore = true;
+        previous_was_underscore = true;
     }
     for c in name.chars() {
         // Allowed characters are `a-z A-Z 0-9 : _`
         // Invalid characters in the metric name MUST be replaced with the `_` character.
         if c.is_ascii_alphanumeric() || c == ':' {
             f.write_char(c)?;
-            last_is_underscore = false;
+            previous_was_underscore = false;
         } else {
-            if !last_is_underscore {
+            if !previous_was_underscore {
                 f.write_char('_')?;
             }
-            last_is_underscore = true;
+            previous_was_underscore = true;
         }
     }
     Ok(())
 }
 
-/// Get a [Display] implementation which shows [SystemTime] as a unix timestamp in float seconds.
+/// Get a [`Display`] implementation which shows [`SystemTime`] as a unix timestamp in float seconds.
 fn to_timestamp(time: SystemTime) -> impl uDisplay {
     let ts = time
         .duration_since(SystemTime::UNIX_EPOCH)

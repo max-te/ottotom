@@ -1,4 +1,3 @@
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,7 +9,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::convert::WriteOpenMetrics;
 
-/// A [PushMetricExporter] which writes metrics into an internal buffer in OpenMetrics text format.
+/// A [`PushMetricExporter`] which writes metrics into an internal buffer in OpenMetrics text format.
 #[derive(Debug, Clone)]
 pub struct OpenMetricsExporter {
     buffer: Arc<RwLock<String>>,
@@ -19,7 +18,7 @@ pub struct OpenMetricsExporter {
 
 impl Default for OpenMetricsExporter {
     fn default() -> Self {
-        OpenMetricsExporter {
+        Self {
             buffer: Arc::new(RwLock::new(String::new())),
             backbuffer: Arc::new(Mutex::new(String::new())),
         }
@@ -29,7 +28,7 @@ impl Default for OpenMetricsExporter {
 impl OpenMetricsExporter {
     #[deprecated(note = "use Default::default() instead")]
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 
     /// Get a clone of the last-exported OpenMetrics text.
@@ -45,13 +44,13 @@ impl PushMetricExporter for OpenMetricsExporter {
         let mut backbuffer = self.backbuffer.lock().await;
         backbuffer.clear();
         metrics
-            .write_as_openmetrics(backbuffer.deref_mut())
+            .write_as_openmetrics(&mut *backbuffer)
             .map_err(|err| {
                 OTelSdkError::InternalFailure(format!("Failed to write to buffer: {err}"))
             })?;
 
         let mut frontbuffer = self.buffer.write().await;
-        std::mem::swap(frontbuffer.deref_mut(), backbuffer.deref_mut());
+        std::mem::swap(&mut *frontbuffer, &mut *backbuffer);
 
         Ok(())
     }

@@ -1,6 +1,6 @@
 use ufmt::uDisplay;
 
-pub(crate) trait FastDisplay {
+pub trait FastDisplay {
     fn fast_display(&self) -> impl uDisplay + Copy + use<Self>;
 }
 

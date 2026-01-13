@@ -60,20 +60,15 @@ fn get_prom_units(unit: &str) -> Option<&'static str> {
         "ns" => Some("nanoseconds"),
 
         // Bytes
-        "By" => Some("bytes"),
         "KiBy" => Some("kibibytes"),
         "MiBy" => Some("mebibytes"),
         "GiBy" => Some("gibibytes"),
         "TiBy" => Some("tibibytes"),
-        "KBy" => Some("kilobytes"),
-        "MBy" => Some("megabytes"),
-        "GBy" => Some("gigabytes"),
-        "TBy" => Some("terabytes"),
-        "B" => Some("bytes"),
-        "KB" => Some("kilobytes"),
-        "MB" => Some("megabytes"),
-        "GB" => Some("gigabytes"),
-        "TB" => Some("terabytes"),
+        "By" | "B" => Some("bytes"),
+        "KBy" | "KB" => Some("kilobytes"),
+        "MBy" | "MB" => Some("megabytes"),
+        "GBy" | "GB" => Some("gigabytes"),
+        "TBy" | "TB" => Some("terabytes"),
 
         // SI
         "m" => Some("meters"),
