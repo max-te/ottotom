@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::convert::WriteOpenMetrics;
 
-/// A [PushMetricsExporter] which writes metrics into an internal buffer in OpenMetrics text format.
+/// A [PushMetricExporter] which writes metrics into an internal buffer in OpenMetrics text format.
 #[derive(Debug, Clone)]
 pub struct OpenMetricsExporter {
     buffer: Arc<RwLock<String>>,

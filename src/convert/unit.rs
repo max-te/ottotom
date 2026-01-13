@@ -1,7 +1,7 @@
 /*!
  * OTEL style short unit to Prometheus style long unit conversion
  *
- * Extracted from the opentelemetry-prometheus crate (https://github.com/open-telemetry/opentelemetry-rust/blob/eac368a7e4addbee3b68c27a0eafae59928ad4c7/opentelemetry-prometheus/src/utils.rs)
+ * Extracted from the [opentelemetry-prometheus crate](https://github.com/open-telemetry/opentelemetry-rust/blob/eac368a7e4addbee3b68c27a0eafae59928ad4c7/opentelemetry-prometheus/src/utils.rs)
  * with modifications.
  * Licensed under the Apache-2.0 License, Original Copyright 2025 The opentelemetry-rust Authors
  */
