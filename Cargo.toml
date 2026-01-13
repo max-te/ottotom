@@ -1,6 +1,6 @@
 [package]
-name = "opentelemetry-openmetrics"
-version = "0.31.2"
+name = "ottotom"
+version = "0.31.3"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/max-te/opentelemetry-openmetrics-text/"
@@ -13,7 +13,7 @@ opentelemetry = { version = "*", default-features = false }
 opentelemetry_sdk = { version = "0.31.0", default-features = false, features = [
     "metrics",
 ] }
-testsupport = { path = "testsupport" }
+ottotom-testsupport = { path = "testsupport" }
 
 [dependencies]
 opentelemetry.workspace = true
@@ -30,13 +30,13 @@ ufmt = { version = "0.2.0", features = ["std"] }
 [features]
 exporter = ["dep:tokio"]
 tracing = ["dep:tracing"]
-histogram-min-max = []
+experimental-histogram-min-max = []
 otel_scope_info = []
 fast = ["dep:itoa", "dep:memchr"]
 default = ["tracing", "exporter", "otel_scope_info", "fast"]
 
 [dev-dependencies]
-testsupport.workspace = true
+ottotom-testsupport.workspace = true
 openmetrics-parser = "0.4.4"
 tango-bench = "0.6"
 insta = { version = "1.43.2" }

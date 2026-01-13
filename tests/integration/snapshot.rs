@@ -1,10 +1,10 @@
 use std::time::SystemTime;
 
 use insta::assert_snapshot;
-use opentelemetry_openmetrics::convert::WriteOpenMetrics;
+use ottotom::convert::WriteOpenMetrics;
 
-use testsupport::resource_metrics::make_test_metrics;
-use testsupport::timestamps::get_all_timestamps;
+use ottotom_testsupport::resource_metrics::make_test_metrics;
+use ottotom_testsupport::timestamps::get_all_timestamps;
 
 #[test]
 fn matches_snapshot() {

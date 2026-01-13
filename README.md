@@ -1,4 +1,4 @@
-# opentelemetry-openmetrics
+# Ottotom (OpenTelemetry to text OpenMetrics)
 
 A Rust crate for exporting OpenTelemetry metrics in the [OpenMetrics](https://github.com/prometheus/OpenMetrics) text format.
 This serves as a protobuf-free alternative to the discontinued `opentelemetry-prometheus` crate.
@@ -14,7 +14,7 @@ This serves as a protobuf-free alternative to the discontinued `opentelemetry-pr
 
 ```rust,no_run
 use std::time::Duration;
-use opentelemetry_openmetrics::exporter::OpenMetricsExporter;
+use ottotom::exporter::OpenMetricsExporter;
 use opentelemetry_sdk::metrics::PeriodicReader;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 

@@ -1,7 +1,7 @@
 use openmetrics_parser::{ParseError, openmetrics::parse_openmetrics};
-use opentelemetry_openmetrics::convert::WriteOpenMetrics;
+use ottotom::convert::WriteOpenMetrics;
 
-use testsupport::resource_metrics::make_test_metrics;
+use ottotom_testsupport::resource_metrics::make_test_metrics;
 
 #[test]
 pub fn test_output_is_parseable_by_openmetrics_parser() {

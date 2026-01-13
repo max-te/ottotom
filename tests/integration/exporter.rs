@@ -1,6 +1,6 @@
 use opentelemetry::metrics::MeterProvider;
-use opentelemetry_openmetrics::exporter::OpenMetricsExporter;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
+use ottotom::exporter::OpenMetricsExporter;
 
 #[test]
 fn exporter_exports() {

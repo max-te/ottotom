@@ -3,10 +3,10 @@ use std::time::UNIX_EPOCH;
 use insta::assert_snapshot;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::metrics::data::ScopeMetrics;
-use testsupport::metric_data::{
+use ottotom_testsupport::metric_data::{
     make_f64_gauge_metric, make_f64_histogram_metric, make_u64_counter_metric,
 };
-use testsupport::resource_metrics::make_test_metrics;
+use ottotom_testsupport::resource_metrics::make_test_metrics;
 use ufmt::uwrite;
 
 use super::*;

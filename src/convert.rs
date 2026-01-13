@@ -299,7 +299,7 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
             ts,
         )?;
 
-        #[cfg(feature = "histogram-min-max")]
+        #[cfg(feature = "experimental-histogram-min-max")]
         {
             // Non-compliant but useful
             // TODO: Expose as a separate gauge?
