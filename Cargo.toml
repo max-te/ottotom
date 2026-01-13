@@ -16,7 +16,7 @@ opentelemetry = { version = "0.31.0", default-features = false }
 opentelemetry_sdk = { version = "0.31.0", default-features = false, features = [
     "metrics",
 ] }
-ottotom-testsupport = { path = "testsupport" }
+ottotom-testsupport = { path = "testsupport", version = "0.31" }
 
 [dependencies]
 opentelemetry.workspace = true
