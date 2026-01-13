@@ -4,6 +4,9 @@ version = "0.31.3"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/max-te/opentelemetry-openmetrics-text/"
+keywords = ["opentelemetry", "observability", "prometheus", "metrics"]
+readme = "README.md"
+description = "Conversion of OpenTelemetry metrics to OpenMetrics Text format"
 
 [workspace]
 resolver = "3"
