@@ -4,7 +4,7 @@ format:
 test:
     cargo nextest run
 bench:
-    cargo nextest run --bench -- solo
+    cargo test --bench converter -- solo
 bench-baseline:
     cargo export ./target/benchmarks -- bench converter
 bench-compare:
