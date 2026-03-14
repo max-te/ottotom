@@ -24,14 +24,11 @@ opentelemetry_sdk.workspace = true
 memchr = { version = "2.7.6", optional = true }
 itoa = { version = "1.0.15", optional = true }
 ryu = { version = "1.0.20" }
-tokio = { version = "1.48.0", default-features = false, features = [
-    "sync",
-], optional = true }
 tracing = { version = "0.1.41", optional = true }
 ufmt = { version = "0.2.0", features = ["std"] }
 
 [features]
-exporter = ["dep:tokio"]
+exporter = []
 tracing = ["dep:tracing"]
 experimental-histogram-min-max = []
 otel_scope_info = []
