@@ -8,6 +8,19 @@ use opentelemetry_sdk::metrics::reader::MetricReader;
 
 use crate::reader::TestMetricsReader;
 
+fn extract_metric<'m>(
+    metrics: &'m ResourceMetrics,
+    scope_name: &str,
+    metric_name: &str,
+) -> Option<&'m AggregatedMetrics> {
+    metrics
+        .scope_metrics()
+        .find_map(|m| (m.scope().name() == scope_name).then_some(m.metrics()))?
+        .into_iter()
+        .find(|m| m.name() == metric_name)
+        .map(|g| g.data())
+}
+
 pub fn make_f64_gauge_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Gauge<f64> {
     let reader = TestMetricsReader::default();
     let meter_provider = SdkMeterProvider::builder()
@@ -30,20 +43,12 @@ pub fn make_f64_gauge_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Gauge<f64> {
     reader.collect(&mut metrics).unwrap();
 
     // Extract the gauge data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYGAUGE {
-                    if let AggregatedMetrics::F64(MetricData::Gauge(gauge)) = metric.data() {
-                        return gauge.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found gauge data")
+    let Some(AggregatedMetrics::F64(MetricData::Gauge(gauge))) =
+        extract_metric(&metrics, scope_name, MYGAUGE)
+    else {
+        panic!("MYGAUGE should be f64 gauge");
+    };
+    gauge.clone()
 }
 
 #[test]
@@ -87,20 +92,12 @@ pub fn make_u64_gauge_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Gauge<u64> {
     reader.collect(&mut metrics).unwrap();
 
     // Extract the gauge data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYGAUGE {
-                    if let AggregatedMetrics::U64(MetricData::Gauge(gauge)) = metric.data() {
-                        return gauge.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found gauge data")
+    let Some(AggregatedMetrics::U64(MetricData::Gauge(gauge))) =
+        extract_metric(&metrics, scope_name, MYGAUGE)
+    else {
+        panic!("MYGAUGE should be u64 gauge");
+    };
+    gauge.clone()
 }
 
 #[test]
@@ -144,20 +141,12 @@ pub fn make_i64_gauge_metric(values: Vec<(i64, Vec<KeyValue>)>) -> Gauge<i64> {
     reader.collect(&mut metrics).unwrap();
 
     // Extract the gauge data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYGAUGE {
-                    if let AggregatedMetrics::I64(MetricData::Gauge(gauge)) = metric.data() {
-                        return gauge.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found gauge data")
+    let Some(AggregatedMetrics::I64(MetricData::Gauge(gauge))) =
+        extract_metric(&metrics, scope_name, MYGAUGE)
+    else {
+        panic!("MYGAUGE should be i64 gauge");
+    };
+    gauge.clone()
 }
 
 #[test]
@@ -201,20 +190,12 @@ pub fn make_u64_counter_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Sum<u64> {
     reader.collect(&mut metrics).unwrap();
 
     // Extract the sum data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYCOUNTER {
-                    if let AggregatedMetrics::U64(MetricData::Sum(sum)) = metric.data() {
-                        return sum.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found sum data")
+    let Some(AggregatedMetrics::U64(MetricData::Sum(counter))) =
+        extract_metric(&metrics, scope_name, MYCOUNTER)
+    else {
+        panic!("MYCOUNTER should be u64 sum");
+    };
+    counter.clone()
 }
 
 #[test]
@@ -258,20 +239,12 @@ pub fn make_f64_counter_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Sum<f64> {
     reader.collect(&mut metrics).unwrap();
 
     // Extract the sum data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYCOUNTER {
-                    if let AggregatedMetrics::F64(MetricData::Sum(sum)) = metric.data() {
-                        return sum.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found sum data")
+    let Some(AggregatedMetrics::F64(MetricData::Sum(counter))) =
+        extract_metric(&metrics, scope_name, MYCOUNTER)
+    else {
+        panic!("MYCOUNTER should be f64 sum");
+    };
+    counter.clone()
 }
 
 #[test]
@@ -315,20 +288,12 @@ pub fn make_i64_counter_metric(values: Vec<(i64, Vec<KeyValue>)>) -> Sum<i64> {
     reader.collect(&mut metrics).unwrap();
 
     // Extract the sum data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYCOUNTER {
-                    if let AggregatedMetrics::I64(MetricData::Sum(sum)) = metric.data() {
-                        return sum.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found sum data")
+    let Some(AggregatedMetrics::I64(MetricData::Sum(counter))) =
+        extract_metric(&metrics, scope_name, MYCOUNTER)
+    else {
+        panic!("MYCOUNTER should be i64 sum");
+    };
+    counter.clone()
 }
 
 #[test]
@@ -372,21 +337,12 @@ pub fn make_f64_histogram_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Histogram
     reader.collect(&mut metrics).unwrap();
 
     // Extract the histogram data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYHISTOGRAM {
-                    if let AggregatedMetrics::F64(MetricData::Histogram(histogram)) = metric.data()
-                    {
-                        return histogram.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found histogram data")
+    let Some(AggregatedMetrics::F64(MetricData::Histogram(histogram))) =
+        extract_metric(&metrics, scope_name, MYHISTOGRAM)
+    else {
+        panic!("MYCOUNTER should be f64 histogram");
+    };
+    histogram.clone()
 }
 
 #[test]
@@ -444,21 +400,12 @@ pub fn make_u64_histogram_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Histogram
     reader.collect(&mut metrics).unwrap();
 
     // Extract the histogram data
-    let scope_metrics = metrics.scope_metrics().collect::<Vec<_>>();
-    for scope in &scope_metrics {
-        if scope.scope().name() == scope_name {
-            for metric in scope.metrics() {
-                if metric.name() == MYHISTOGRAM {
-                    if let AggregatedMetrics::U64(MetricData::Histogram(histogram)) = metric.data()
-                    {
-                        return histogram.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("should have found histogram data")
+    let Some(AggregatedMetrics::U64(MetricData::Histogram(histogram))) =
+        extract_metric(&metrics, scope_name, MYHISTOGRAM)
+    else {
+        panic!("MYCOUNTER should be u64 histogram");
+    };
+    histogram.clone()
 }
 
 #[test]
