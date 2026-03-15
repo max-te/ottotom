@@ -1,5 +1,5 @@
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::MeterProvider;
+use opentelemetry::metrics::{Meter, MeterProvider};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, Gauge, Histogram, MetricData, ResourceMetrics, Sum,
@@ -8,47 +8,93 @@ use opentelemetry_sdk::metrics::reader::MetricReader;
 
 use crate::reader::TestMetricsReader;
 
-fn extract_metric<'m>(
-    metrics: &'m ResourceMetrics,
-    scope_name: &str,
-    metric_name: &str,
-) -> Option<&'m AggregatedMetrics> {
-    metrics
-        .scope_metrics()
-        .find_map(|m| (m.scope().name() == scope_name).then_some(m.metrics()))?
-        .into_iter()
-        .find(|m| m.name() == metric_name)
-        .map(|g| g.data())
+struct TestMeter {
+    reader: TestMetricsReader,
+    _provider: SdkMeterProvider,
+    scope: &'static str,
+    meter: Meter,
 }
 
-pub fn make_f64_gauge_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Gauge<f64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
+impl TestMeter {
+    fn new() -> Self {
+        let reader = TestMetricsReader::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(reader.clone())
+            .build();
+        let scope = "test_meter";
+        let meter = provider.meter(scope);
 
-    const MYGAUGE: &str = "mygauge";
-    let gauge_builder = meter.f64_gauge(MYGAUGE);
-    let gauge = gauge_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        gauge.record(value, attrs.as_slice());
+        Self {
+            reader,
+            _provider: provider, // When the provider is dropped the reader is shut down.
+            scope,
+            meter,
+        }
     }
 
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
+    fn extract<T: FromAggregated + Clone>(&self, metric_name: &str) -> Option<T> {
+        let mut metrics = ResourceMetrics::default();
+        self.reader.collect(&mut metrics).unwrap();
+        metrics
+            .scope_metrics()
+            .find_map(|m| (m.scope().name() == self.scope).then_some(m.metrics()))?
+            .into_iter()
+            .find(|m| m.name() == metric_name)
+            .map(|g| g.data())
+            .and_then(T::from_aggregated)
+            .cloned()
+    }
+}
 
-    // Extract the gauge data
-    let Some(AggregatedMetrics::F64(MetricData::Gauge(gauge))) =
-        extract_metric(&metrics, scope_name, MYGAUGE)
-    else {
-        panic!("MYGAUGE should be f64 gauge");
+trait FromAggregated {
+    fn from_aggregated(metrics: &AggregatedMetrics) -> Option<&Self>;
+}
+
+macro_rules! impl_from_aggregated {
+    ($aggregatedMetricsVariant:ident, $metricDataVariant:ident for $($For:tt)*) => {
+        impl FromAggregated for $($For)* {
+            fn from_aggregated(metrics: &AggregatedMetrics) -> Option<&Self> {
+                match metrics {
+                    AggregatedMetrics::$aggregatedMetricsVariant(MetricData::$metricDataVariant(it)) => Some(it),
+                    _ => None,
+                }
+            }
+        }
+
     };
-    gauge.clone()
+}
+
+trait MakeMetric {
+    type ValueType;
+    fn make_metric<I: IntoIterator<Item = (Self::ValueType, Vec<KeyValue>)>>(
+        observations: I,
+    ) -> Self;
+}
+
+macro_rules! impl_make_metric {
+    ($ValueType:ident, $instrumentMethod:ident, $recordMethod:ident for $($For:tt)*) => {
+        impl MakeMetric for $($For)* {
+            type ValueType = $ValueType;
+
+            fn make_metric<'a, I: IntoIterator<Item = (Self::ValueType, Vec<KeyValue>)>>(observations: I) -> Self {
+                let testmeter = TestMeter::new();
+                let name = concat!("my_", stringify!($instrumentMethod));
+                let instrument = testmeter.meter.$instrumentMethod(name).build();
+                for (value, attrs) in observations {
+                    instrument.$recordMethod(value, attrs.as_slice());
+                }
+                testmeter.extract::<Self>(name).unwrap()
+            }
+        }
+
+    };
+}
+
+impl_from_aggregated!(F64, Gauge for Gauge<f64>);
+impl_make_metric!(f64, f64_gauge, record for Gauge<f64>);
+
+pub fn make_f64_gauge_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Gauge<f64> {
+    Gauge::<f64>::make_metric(values)
 }
 
 #[test]
@@ -70,34 +116,11 @@ fn test_make_f64_gauge_metric() {
     );
 }
 
+impl_from_aggregated!(U64, Gauge for Gauge<u64>);
+impl_make_metric!(u64, u64_gauge, record for Gauge<u64>);
+
 pub fn make_u64_gauge_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Gauge<u64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
-
-    const MYGAUGE: &str = "mygauge";
-    let gauge_builder = meter.u64_gauge(MYGAUGE);
-    let gauge = gauge_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        gauge.record(value, attrs.as_slice());
-    }
-
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
-
-    // Extract the gauge data
-    let Some(AggregatedMetrics::U64(MetricData::Gauge(gauge))) =
-        extract_metric(&metrics, scope_name, MYGAUGE)
-    else {
-        panic!("MYGAUGE should be u64 gauge");
-    };
-    gauge.clone()
+    Gauge::<u64>::make_metric(values)
 }
 
 #[test]
@@ -119,34 +142,11 @@ fn test_make_u64_gauge_metric() {
     );
 }
 
+impl_from_aggregated!(I64, Gauge for Gauge<i64>);
+impl_make_metric!(i64, i64_gauge, record for Gauge<i64>);
+
 pub fn make_i64_gauge_metric(values: Vec<(i64, Vec<KeyValue>)>) -> Gauge<i64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
-
-    const MYGAUGE: &str = "mygauge";
-    let gauge_builder = meter.i64_gauge(MYGAUGE);
-    let gauge = gauge_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        gauge.record(value, attrs.as_slice());
-    }
-
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
-
-    // Extract the gauge data
-    let Some(AggregatedMetrics::I64(MetricData::Gauge(gauge))) =
-        extract_metric(&metrics, scope_name, MYGAUGE)
-    else {
-        panic!("MYGAUGE should be i64 gauge");
-    };
-    gauge.clone()
+    Gauge::<i64>::make_metric(values)
 }
 
 #[test]
@@ -168,34 +168,11 @@ fn test_make_i64_gauge_metric() {
     );
 }
 
+impl_from_aggregated!(U64, Sum for Sum<u64>);
+impl_make_metric!(u64, u64_counter, add for Sum<u64>);
+
 pub fn make_u64_counter_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Sum<u64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
-
-    const MYCOUNTER: &str = "mycounter";
-    let counter_builder = meter.u64_counter(MYCOUNTER);
-    let counter = counter_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        counter.add(value, attrs.as_slice());
-    }
-
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
-
-    // Extract the sum data
-    let Some(AggregatedMetrics::U64(MetricData::Sum(counter))) =
-        extract_metric(&metrics, scope_name, MYCOUNTER)
-    else {
-        panic!("MYCOUNTER should be u64 sum");
-    };
-    counter.clone()
+    Sum::<u64>::make_metric(values)
 }
 
 #[test]
@@ -217,34 +194,11 @@ fn test_make_u64_counter_metric() {
     );
 }
 
+impl_from_aggregated!(F64, Sum for Sum<f64>);
+impl_make_metric!(f64, f64_counter, add for Sum<f64>);
+
 pub fn make_f64_counter_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Sum<f64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
-
-    const MYCOUNTER: &str = "mycounter";
-    let counter_builder = meter.f64_counter(MYCOUNTER);
-    let counter = counter_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        counter.add(value, attrs.as_slice());
-    }
-
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
-
-    // Extract the sum data
-    let Some(AggregatedMetrics::F64(MetricData::Sum(counter))) =
-        extract_metric(&metrics, scope_name, MYCOUNTER)
-    else {
-        panic!("MYCOUNTER should be f64 sum");
-    };
-    counter.clone()
+    Sum::<f64>::make_metric(values)
 }
 
 #[test]
@@ -266,34 +220,11 @@ fn test_make_f64_counter_metric() {
     );
 }
 
+impl_from_aggregated!(I64, Sum for Sum<i64>);
+impl_make_metric!(i64, i64_up_down_counter, add for Sum<i64>);
+
 pub fn make_i64_counter_metric(values: Vec<(i64, Vec<KeyValue>)>) -> Sum<i64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
-
-    const MYCOUNTER: &str = "mycounter";
-    let counter_builder = meter.i64_up_down_counter(MYCOUNTER);
-    let counter = counter_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        counter.add(value, attrs.as_slice());
-    }
-
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
-
-    // Extract the sum data
-    let Some(AggregatedMetrics::I64(MetricData::Sum(counter))) =
-        extract_metric(&metrics, scope_name, MYCOUNTER)
-    else {
-        panic!("MYCOUNTER should be i64 sum");
-    };
-    counter.clone()
+    Sum::<i64>::make_metric(values)
 }
 
 #[test]
@@ -315,34 +246,11 @@ fn test_make_i64_counter_metric() {
     );
 }
 
+impl_from_aggregated!(F64, Histogram for Histogram<f64>);
+impl_make_metric!(f64, f64_histogram, record for Histogram<f64>);
+
 pub fn make_f64_histogram_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Histogram<f64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
-
-    const MYHISTOGRAM: &str = "myhistogram";
-    let histogram_builder = meter.f64_histogram(MYHISTOGRAM);
-    let histogram = histogram_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        histogram.record(value, attrs.as_slice());
-    }
-
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
-
-    // Extract the histogram data
-    let Some(AggregatedMetrics::F64(MetricData::Histogram(histogram))) =
-        extract_metric(&metrics, scope_name, MYHISTOGRAM)
-    else {
-        panic!("MYCOUNTER should be f64 histogram");
-    };
-    histogram.clone()
+    Histogram::<f64>::make_metric(values)
 }
 
 #[test]
@@ -378,34 +286,11 @@ fn test_make_f64_histogram_metric() {
     );
 }
 
+impl_from_aggregated!(U64, Histogram for Histogram<u64>);
+impl_make_metric!(u64, u64_histogram, record for Histogram<u64>);
+
 pub fn make_u64_histogram_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Histogram<u64> {
-    let reader = TestMetricsReader::default();
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    let scope_name = "test_meter";
-    let meter = meter_provider.meter(scope_name);
-
-    const MYHISTOGRAM: &str = "myhistogram";
-    let histogram_builder = meter.u64_histogram(MYHISTOGRAM);
-    let histogram = histogram_builder.build();
-
-    // Record all values with their attributes
-    for (value, attrs) in values {
-        histogram.record(value, attrs.as_slice());
-    }
-
-    // Collect metrics
-    let mut metrics = ResourceMetrics::default();
-    reader.collect(&mut metrics).unwrap();
-
-    // Extract the histogram data
-    let Some(AggregatedMetrics::U64(MetricData::Histogram(histogram))) =
-        extract_metric(&metrics, scope_name, MYHISTOGRAM)
-    else {
-        panic!("MYCOUNTER should be u64 histogram");
-    };
-    histogram.clone()
+    Histogram::<u64>::make_metric(values)
 }
 
 #[test]
