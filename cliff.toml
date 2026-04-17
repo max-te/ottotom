@@ -1,0 +1,61 @@
+# git-cliff ~ configuration file
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits %}
+        - [`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/max-te/ottotom/commit/{{ commit.id }}) {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+            {% if commit.breaking %}[**breaking**] {% endif %}\
+            {{ commit.message | upper_first }}\
+    {% endfor %}
+{% endfor %}
+"""
+trim = true
+output = "CHANGELOG.md"
+
+[git]
+conventional_commits = true
+# Include unconventional commits rather than silently dropping them.
+filter_unconventional = false
+split_commits = false
+
+commit_parsers = [
+    # Skip commits scoped to the internal testsupport dev crate.
+    { message = "\\(testsupport\\)", skip = true },
+    { message = "\\(tests\\)", skip = true },
+    { message = "\\(test\\)", skip = true },
+    # Skip freeform commits that are clearly about testsupport internals.
+    { message = "testsupport", skip = true },
+    # Skip benchmark tooling commits.
+    { message = "benchmark", skip = true },
+    { message = "bench", skip = true },
+
+    # User-facing categories.
+    { message = "^feat", group = "<!-- 0 -->Features" },
+    { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
+    { message = "^perf", group = "<!-- 2 -->Performance" },
+    { message = "^doc", group = "<!-- 3 -->Documentation" },
+
+    # Skip internal housekeeping.
+    { message = "^chore", skip = true },
+    { message = "^refactor", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^test", skip = true },
+    { message = "^tests", skip = true },
+    { message = "^style", skip = true },
+
+    # Catch freeform commits that didn't use a prefix.
+    { message = ".*", group = "<!-- 4 -->Other" },
+]
+
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"
