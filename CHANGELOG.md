@@ -1,10 +1,15 @@
-## [unreleased]
+## [0.32.0] - 2026-05-10
+
+### Documentation
+
+- [`93eb3d0`](https://github.com/max-te/ottotom/commit/93eb3d0aa99b43fdd775de10fc2e374e16265ef1) Remove async from readme example
 
 ### Other
 
 - [`0f5fcc3`](https://github.com/max-te/ottotom/commit/0f5fcc33de82682f10038c3c4cf1c0885b0aed5b) Clean up some pedantic clippy lints
 - [`cbcc22f`](https://github.com/max-te/ottotom/commit/cbcc22fc0104c69ce7a463b700e6b9ffdbf0a462) Set up Github Actions test workflow
 - [`8c80aa9`](https://github.com/max-te/ottotom/commit/8c80aa91b0cf66b064b335ceed87bfdb5b98d908) This crate doesn't need asynchronous locks
+- [`8987f7b`](https://github.com/max-te/ottotom/commit/8987f7bbabbcdf4cf4089334ad530cb1a4f91bd8) Update to 0.32
 ## [0.31.3] - 2026-01-13
 
 ### Features
