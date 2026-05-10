@@ -33,8 +33,6 @@ pub fn init_openmetrics_exporter() -> OpenMetricsExporter {
 let exporter = init_openmetrics_exporter();
 // Retain the exporter in you app state. Register some opentelmetry meters and fill them with data.
 // Later on (e.g. in a `/metrics` endpoint) read the current metrics:
-async {
-    let openmetrics = exporter.text().await;
-    println!("{}", openmetrics);
-};
+let openmetrics = exporter.text();
+println!("{}", openmetrics);
 ```
