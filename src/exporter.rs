@@ -25,18 +25,16 @@ impl Default for OpenMetricsExporter {
 }
 
 impl OpenMetricsExporter {
-    #[deprecated(note = "use Default::default() instead")]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Get a clone of the last-exported OpenMetrics text.
-    pub async fn text(&self) -> String {
-        match self.buffer.read().map(|t| t.as_str().to_owned()) {
-            Ok(text) => text,
-            Err(_) => std::future::pending().await,
-            // TODO: turn this into a non-async function in 0.32
-        }
+    pub fn text(&self) -> String {
+        self.buffer
+            .read()
+            .map(|t| t.as_str().to_owned())
+            .unwrap_or_else(|err| {
+                tracing::error!("Frontbuffer lock was poisoned: {err}");
+                // the frontbuffer-backbuffer swap should make sure we never see a corrupted buffer
+                err.into_inner().as_str().to_owned()
+            })
     }
 }
 
@@ -44,9 +42,11 @@ impl PushMetricExporter for OpenMetricsExporter {
     async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
         #[cfg(feature = "tracing")]
         tracing::debug!("Exporting metrics");
-        let mut backbuffer = self.backbuffer.lock().map_err(|err| {
-            OTelSdkError::InternalFailure(format!("Failed to acquire backbuffer: {err}"))
-        })?;
+        let mut backbuffer = self.backbuffer.lock().unwrap_or_else(|err| {
+            tracing::error!("Backbuffer lock was poisoned: {err}");
+            self.backbuffer.clear_poison();
+            err.into_inner()
+        });
         backbuffer.clear();
         metrics
             .write_as_openmetrics(&mut *backbuffer)
@@ -54,11 +54,11 @@ impl PushMetricExporter for OpenMetricsExporter {
                 OTelSdkError::InternalFailure(format!("Failed to write to buffer: {err}"))
             })?;
 
-        let mut frontbuffer = self.buffer.write().map_err(|err| {
-            OTelSdkError::InternalFailure(format!(
-                "Failed to acquire frontbuffer for writer: {err}"
-            ))
-        })?;
+        let mut frontbuffer = self.buffer.write().unwrap_or_else(|err| {
+            tracing::error!("Frontbuffer lock was poisoned: {err}");
+            self.buffer.clear_poison();
+            err.into_inner()
+        });
         std::mem::swap(&mut *frontbuffer, &mut *backbuffer);
 
         Ok(())

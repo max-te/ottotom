@@ -1,6 +1,6 @@
 [package]
 name = "ottotom-testsupport"
-version = "0.31.0"
+version = "0.32.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/max-te/ottotom"

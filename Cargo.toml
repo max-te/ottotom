@@ -1,6 +1,6 @@
 [package]
 name = "ottotom"
-version = "0.31.3"
+version = "0.32.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/max-te/ottotom"
@@ -12,11 +12,11 @@ description = "Conversion of OpenTelemetry metrics to OpenMetrics Text format"
 resolver = "3"
 members = ["testsupport"]
 [workspace.dependencies]
-opentelemetry = { version = "0.31.0", default-features = false }
-opentelemetry_sdk = { version = "0.31.0", default-features = false, features = [
+opentelemetry = { version = "0.32.0", default-features = false }
+opentelemetry_sdk = { version = "0.32.0", default-features = false, features = [
     "metrics",
 ] }
-ottotom-testsupport = { path = "testsupport", version = "0.31" }
+ottotom-testsupport = { path = "testsupport", version = "0.32" }
 
 [dependencies]
 opentelemetry.workspace = true
@@ -40,7 +40,6 @@ ottotom-testsupport.workspace = true
 openmetrics-parser = "0.4.4"
 tango-bench = "0.6"
 insta = { version = "1.43.2" }
-tokio = { version = "1", features = ["rt"] }
 
 [[bench]]
 name = "converter"

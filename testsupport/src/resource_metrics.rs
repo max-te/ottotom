@@ -1,6 +1,7 @@
 use crate::reader::TestMetricsReader;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
+use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::reader::MetricReader;
@@ -8,6 +9,11 @@ use opentelemetry_sdk::metrics::reader::MetricReader;
 pub fn make_test_metrics() -> ResourceMetrics {
     let reader = TestMetricsReader::default();
     let meter_provider = SdkMeterProvider::builder()
+        .with_resource(
+            Resource::builder()
+                .with_service_name("ottotom-testsupport")
+                .build(),
+        )
         .with_reader(reader.clone())
         .build();
     let meter = meter_provider.meter("meter.1");
