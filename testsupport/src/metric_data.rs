@@ -38,7 +38,6 @@ impl TestMeter {
         metrics
             .scope_metrics()
             .find_map(|m| (m.scope().name() == self.scope).then_some(m.metrics()))?
-            .into_iter()
             .find(|m| m.name() == metric_name)
             .map(|g| g.data())
             .and_then(T::from_aggregated)
