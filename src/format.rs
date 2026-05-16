@@ -16,12 +16,7 @@ impl<N: ryu::Float> uDisplay for RyuDisplay<N> {
         let mut formatted = buffer.format(self.0);
 
         // Remove trailing .0 to match f64 Display
-        let formatted_bytes = formatted.as_bytes();
-        if formatted_bytes.ends_with(b".0") {
-            formatted = unsafe {
-                std::str::from_utf8_unchecked(&formatted_bytes[..formatted_bytes.len() - 2])
-            }
-        }
+        formatted = formatted.strip_suffix(".0").unwrap_or(formatted);
 
         f.write_str(formatted)
     }
