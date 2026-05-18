@@ -1,0 +1,91 @@
+# mise.toml – ottotom
+#
+# Development environment, tools, and tasks for the ottotom project.
+# Install mise: https://mise.jdx.dev
+#
+# Run with: mise run <task>
+# List all tasks: mise tasks
+
+[tools]
+rust = "latest"
+
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-edit" = "latest"
+"cargo:cargo-export" = "latest"
+"cargo:cargo-insta" = "latest"
+"cargo:cargo-llvm-cov" = "latest"
+
+"cargo:bacon" = "latest"
+"cargo:git-cliff" = "latest"
+"cargo:prek" = "latest"
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+[tasks.coverage]
+description = "Run code coverage across all feature combinations"
+run = [
+  "cargo llvm-cov clean --workspace",
+  "echo '=== default features ===' && cargo llvm-cov --no-report nextest --workspace",
+  "echo '=== --no-default-features ===' && cargo llvm-cov --no-report nextest --no-default-features",
+  "echo '=== --no-default-features --features otel_scope_info ===' && cargo llvm-cov --no-report nextest --no-default-features --features otel_scope_info",
+  "echo '=== --features experimental-histogram-min-max (lib only) ===' && cargo llvm-cov --no-report nextest --lib --features experimental-histogram-min-max",
+  "cargo llvm-cov report --lcov --output-path target/lcov.info",
+  "cargo llvm-cov report --html --output-dir target/coverage",
+  "cargo llvm-cov report",
+]
+
+[tasks.check]
+description = "Check the workspace for compilation errors"
+run = "cargo check --all"
+
+[tasks.format]
+description = "Format all Rust source files with nightly rustfmt"
+run = "cargo +nightly fmt"
+
+[tasks.test]
+description = "Run all tests with cargo nextest"
+run = "cargo nextest run"
+
+[tasks.test-all-features]
+description = "Run tests across all feature combinations"
+run = [
+  "echo '=== default features ===' && cargo nextest run",
+  "echo '=== --no-default-features ===' && cargo nextest run --no-default-features",
+  "echo '=== --no-default-features --features otel_scope_info ===' && cargo nextest run --no-default-features --features otel_scope_info",
+  "echo '=== --features experimental-histogram-min-max (lib only) ===' && cargo test --lib --features experimental-histogram-min-max",
+]
+
+[tasks.doc]
+description = "Build and open documentation"
+run = "cargo doc --all --no-deps --open"
+
+[tasks.bench]
+description = "Run the converter benchmark in solo mode (via cargo-test harness)"
+run = "cargo test --bench converter -- solo"
+
+[tasks.bench-baseline]
+description = "Export current benchmark results as a baseline"
+run = "cargo export ./target/benchmarks -- bench converter"
+
+[tasks.bench-compare]
+description = "Compare current benchmarks against the saved baseline"
+run = "cargo bench --bench converter -- compare -t 3 target/benchmarks/converter"
+
+[tasks.bacon]
+description = "Run bacon with the default job (check)"
+run = "bacon"
+
+[tasks.release]
+description = "Bump version, update changelog, tag, and publish to crates.io"
+usage = '''
+arg "<version>" help="Semver version to release (e.g. 0.32.0)"
+'''
+run = [
+  "cargo set-version {{arg(version)}}",
+  "git cliff --tag v{{arg(version)}} --output CHANGELOG.md",
+  "git add CHANGELOG.md Cargo.toml Cargo.lock",
+  'git commit -m "chore(release): v{{arg(version)}}"',
+  "git tag v{{arg(version)}}",
+  "cargo publish",
+]

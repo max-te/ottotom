@@ -2,32 +2,36 @@
 #
 # Complete help on configuration: https://dystroy.org/bacon/config/
 #
-# You may check the current default at
+# You may check the current default at
 #   https://github.com/Canop/bacon/blob/main/defaults/default-bacon.toml
 
-default_job = "check"
+default_job = "nextest"
 env.CARGO_TERM_COLOR = "always"
 
 [jobs.check]
 command = [
-    "cargo", "check", "--all",
-    "--message-format", "json-diagnostic-rendered-ansi",
+  "cargo",
+  "check",
+  "--all",
+  "--message-format",
+  "json-diagnostic-rendered-ansi",
 ]
 need_stdout = true
 analyzer = "cargo_json"
 
-# This job lets you run
-# - all tests: bacon test
-# - a specific test: bacon test -- config::test_default_files
-# - the tests of a package: bacon test -- -- -p config
-[jobs.test]
-command = ["cargo", "test", "--all"]
+[jobs.coverage]
+command = ["mise", "coverage"]
 need_stdout = true
 
 [jobs.nextest]
 command = [
-    "cargo", "nextest", "run", "--all",
-    "--hide-progress-bar", "--failure-output", "final"
+  "cargo",
+  "nextest",
+  "run",
+  "--all",
+  "--hide-progress-bar",
+  "--failure-output",
+  "final"
 ]
 need_stdout = true
 analyzer = "nextest"
@@ -37,14 +41,19 @@ analyzer = "nextest"
 [jobs.doc-open]
 command = ["cargo", "doc", "--all", "--no-deps", "--open"]
 need_stdout = false
-on_success = "back" # so that we don't open the browser at each change
+on_success = "back"  # so that we don't open the browser at each change
 
 [jobs.bench]
 command = [
-    "cargo", "bench", "--bench=converter", "--",
-    "--color", "always",
-    "compare", "-o",
-    "target/benchmarks/converter",
+  "cargo",
+  "bench",
+  "--bench=converter",
+  "--",
+  "--color",
+  "always",
+  "compare",
+  "-o",
+  "target/benchmarks/converter",
 ]
 allow_warnings = true
 need_stdout = true
