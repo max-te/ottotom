@@ -2,9 +2,14 @@ use std::time::SystemTime;
 
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
 
-pub fn get_all_timestamps(metrics: &ResourceMetrics) -> Vec<SystemTime> {
-    fn collect_timestamps_inner<T>(timestamps: &mut Vec<SystemTime>, metric_data: &MetricData<T>) {
-        match metric_data {
+pub trait ExtractTimestamps {
+    fn extract_timestamps(&self) -> Vec<SystemTime>;
+}
+
+impl<T> ExtractTimestamps for MetricData<T> {
+    fn extract_timestamps(&self) -> Vec<SystemTime> {
+        let mut timestamps = Vec::new();
+        match self {
             MetricData::Gauge(gauge) => {
                 timestamps.push(gauge.time());
             }
@@ -20,25 +25,36 @@ pub fn get_all_timestamps(metrics: &ResourceMetrics) -> Vec<SystemTime> {
                 timestamps.push(exponential_histogram.start_time());
             }
         }
+        timestamps.sort_unstable();
+        timestamps.dedup();
+        timestamps
     }
+}
 
-    let mut timestamps = Vec::new();
-    for scope in metrics.scope_metrics() {
-        for metric in scope.metrics() {
-            match metric.data() {
-                AggregatedMetrics::F64(metric_data) => {
-                    collect_timestamps_inner(&mut timestamps, metric_data);
-                }
-                AggregatedMetrics::U64(metric_data) => {
-                    collect_timestamps_inner(&mut timestamps, metric_data);
-                }
-                AggregatedMetrics::I64(metric_data) => {
-                    collect_timestamps_inner(&mut timestamps, metric_data)
-                }
-            }
+impl ExtractTimestamps for AggregatedMetrics {
+    fn extract_timestamps(&self) -> Vec<SystemTime> {
+        match self {
+            AggregatedMetrics::F64(metric_data) => metric_data.extract_timestamps(),
+            AggregatedMetrics::U64(metric_data) => metric_data.extract_timestamps(),
+            AggregatedMetrics::I64(metric_data) => metric_data.extract_timestamps(),
         }
     }
-    timestamps.sort_unstable();
-    timestamps.dedup();
-    timestamps
+}
+
+impl ExtractTimestamps for ResourceMetrics {
+    fn extract_timestamps(&self) -> Vec<SystemTime> {
+        let mut timestamps = Vec::new();
+        for scope in self.scope_metrics() {
+            for metric in scope.metrics() {
+                timestamps.extend(metric.data().extract_timestamps());
+            }
+        }
+        timestamps.sort_unstable();
+        timestamps.dedup();
+        timestamps
+    }
+}
+
+pub fn get_all_timestamps(metrics: &ResourceMetrics) -> Vec<SystemTime> {
+    metrics.extract_timestamps()
 }

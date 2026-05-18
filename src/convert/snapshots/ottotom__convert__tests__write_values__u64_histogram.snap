@@ -1,0 +1,23 @@
+---
+source: src/convert/tests.rs
+expression: strip_otel_scope_name(&output)
+---
+my_u64_hist_created{} <TIMESTAMP> <TIMESTAMP>
+my_u64_hist_count{k="v"} 1 <TIMESTAMP>
+my_u64_hist_sum{k="v"} 50 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="0"} 0 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="5"} 0 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="10"} 0 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="25"} 0 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="50"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="75"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="100"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="250"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="500"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="750"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="1000"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="2500"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="5000"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="7500"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="10000"} 1 <TIMESTAMP>
+my_u64_hist_bucket{k="v",le="+Inf"} 1 <TIMESTAMP>

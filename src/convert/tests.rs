@@ -1,15 +1,40 @@
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use insta::assert_snapshot;
 use opentelemetry::KeyValue;
-use opentelemetry_sdk::metrics::data::ScopeMetrics;
+use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
-    make_f64_gauge_metric, make_f64_histogram_metric, make_u64_counter_metric,
+    make_f64_counter_metric, make_f64_gauge_metric, make_i64_counter_metric, make_i64_gauge_metric,
+    make_u64_counter_metric, make_u64_gauge_metric,
 };
+#[cfg(not(feature = "experimental-histogram-min-max"))]
+use ottotom_testsupport::metric_data::{make_f64_histogram_metric, make_u64_histogram_metric};
 use ottotom_testsupport::resource_metrics::make_test_metrics;
+use ottotom_testsupport::timestamps::ExtractTimestamps;
 use ufmt::uwrite;
 
 use super::*;
+
+fn strip_otel_scope_name(s: &str) -> String {
+    let mut result = s.to_owned();
+    if !cfg!(feature = "otel_scope_info") {
+        return result;
+    }
+
+    const OTEL_SCOPE_NAME: &str = "otel_scope_name=\"myscope\"";
+    while let Some(start) = result.find(OTEL_SCOPE_NAME) {
+        result.replace_range(start..start + OTEL_SCOPE_NAME.len(), "");
+        if result.as_bytes()[start - 1..start] == [b','] {
+            // Had preceding attributes
+            result.replace_range(start - 1..start, "");
+        } else if result.as_bytes()[start..start + 1] == [b','] {
+            // Was first attribute with trailing attributes
+            result.replace_range(start..start + 1, "");
+        }
+    }
+
+    result
+}
 
 #[test]
 fn test_write_sanitized_name() {
@@ -28,6 +53,31 @@ fn test_write_sanitized_name() {
     output.clear();
     write_sanitized_name(&mut output, "1.metric").unwrap();
     assert_eq!(output, "_1_metric");
+
+    // Multiple consecutive invalid chars should collapse to single underscore
+    output.clear();
+    write_sanitized_name(&mut output, "a..b").unwrap();
+    assert_eq!(output, "a_b");
+
+    // Mixed invalid chars should collapse
+    output.clear();
+    write_sanitized_name(&mut output, "a..-..b").unwrap();
+    assert_eq!(output, "a_b");
+
+    // Leading invalid char becomes underscore
+    output.clear();
+    write_sanitized_name(&mut output, ".abc").unwrap();
+    assert_eq!(output, "_abc");
+
+    // Colons are allowed
+    output.clear();
+    write_sanitized_name(&mut output, "my:metric:name").unwrap();
+    assert_eq!(output, "my:metric:name");
+
+    // Colons mixed with invalid chars
+    output.clear();
+    write_sanitized_name(&mut output, "my:metric.name").unwrap();
+    assert_eq!(output, "my:metric_name");
 }
 
 #[test]
@@ -168,31 +218,6 @@ fn test_get_type() {
 }
 
 #[test]
-fn test_write_values() {
-    let resource_metrics = make_test_metrics();
-    let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
-
-    for scope in scopes {
-        let scope_name = scope.scope().name();
-
-        for metric in scope.metrics() {
-            let mut output = String::new();
-            let mut ctx = Context {
-                scope_name,
-                name: metric.name().to_owned(),
-                attr_buffer: String::from("staledata"),
-                ..Context::with_output(&mut output)
-            };
-            let result = write_values(&mut ctx, metric.data());
-
-            assert!(result.is_ok());
-            assert!(!output.is_empty());
-            assert!(output.contains(metric.name()));
-        }
-    }
-}
-
-#[test]
 fn test_write_gauge() {
     let metric = make_f64_gauge_metric(vec![
         (4.2, vec![KeyValue::new("kk", "v1")]),
@@ -216,7 +241,7 @@ fn test_write_gauge() {
 
     write_gauge(&mut ctx, &metric).unwrap();
     let output = output.replace(&ts, "<TIMESTAMP>");
-    assert_snapshot!(output);
+    assert_snapshot!(strip_otel_scope_name(&output));
 }
 
 #[test]
@@ -240,9 +265,10 @@ fn test_write_counter() {
     write_counter(&mut ctx, &metric).unwrap();
 
     let output = output.replace(&ts, "<TIMESTAMP>");
-    assert_snapshot!(output);
+    assert_snapshot!(strip_otel_scope_name(&output));
 }
 
+#[cfg(not(feature = "experimental-histogram-min-max"))]
 #[test]
 fn test_write_histogram() {
     let metric = make_f64_histogram_metric(vec![
@@ -277,5 +303,190 @@ fn test_write_histogram() {
     let output = output.replace(&ts, "<TIMESTAMP>");
     let output = output.replace(&start_ts, "<START_TIMESTAMP>");
 
-    assert_snapshot!(output);
+    assert_snapshot!(strip_otel_scope_name(&output));
+}
+
+#[test]
+fn test_write_as_openmetrics() {
+    let resource_metrics = make_test_metrics();
+    let mut output = String::new();
+    resource_metrics.write_as_openmetrics(&mut output).unwrap();
+
+    // Verify the output has all expected structural elements
+    assert!(output.starts_with("# TYPE target info\n") == cfg!(feature = "otel_scope_info"));
+    assert!(output.contains("target_info{") == cfg!(feature = "otel_scope_info"));
+    assert!(output.contains("# TYPE otel_scope info\n") == cfg!(feature = "otel_scope_info"));
+    assert!(output.contains("otel_scope_info{") == cfg!(feature = "otel_scope_info"));
+    assert!(output.contains("# TYPE f64_gauge gauge\n"));
+    assert!(output.contains("# HELP f64_gauge "));
+    assert!(output.contains("# TYPE u64_counter_seconds counter\n"));
+    assert!(output.contains("# UNIT u64_counter_seconds seconds\n"));
+    assert!(output.contains("u64_counter_seconds_total{"));
+    assert!(output.contains("# TYPE histo histogram\n"));
+    assert!(output.contains("histo_created{"));
+    assert!(output.contains("histo_count{"));
+    assert!(output.contains("histo_sum{"));
+    assert!(output.contains("histo_bucket{"));
+    assert!(output.ends_with("# EOF\n"));
+}
+
+#[test]
+fn test_to_openmetrics_string_trait_method() {
+    let resource_metrics = make_test_metrics();
+    let result = resource_metrics.to_openmetrics_string().unwrap();
+
+    assert!(result.contains("# EOF"));
+    assert!(result.contains("# TYPE"));
+}
+
+#[test]
+fn test_extract_type_unit_and_name_with_unit() {
+    let resource_metrics = make_test_metrics();
+    let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
+
+    // Find the u64.counter metric which has unit "s" -> suffix "seconds"
+    let counter_metric = scopes
+        .iter()
+        .flat_map(|s| s.metrics())
+        .find(|m| m.name() == "u64.counter")
+        .expect("u64.counter metric should exist");
+
+    let mut output = String::new();
+    let mut ctx = Context {
+        attr_buffer: String::from("staledata"),
+        ..Context::with_output(&mut output)
+    };
+
+    let result = extract_type_unit_and_name(&mut ctx, counter_metric);
+    assert!(result);
+    assert_eq!(ctx.typ, "counter");
+    assert_eq!(ctx.name, "u64_counter_seconds");
+    assert_eq!(ctx.unit, Some(std::borrow::Cow::Borrowed("seconds")));
+}
+
+#[test]
+fn test_extract_type_unit_and_name_no_unit() {
+    let resource_metrics = make_test_metrics();
+    let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
+
+    // Find the histo metric which has no unit
+    let hist_metric = scopes
+        .iter()
+        .flat_map(|s| s.metrics())
+        .find(|m| m.name() == "histo")
+        .expect("histo metric should exist");
+
+    let mut output = String::new();
+    let mut ctx = Context {
+        attr_buffer: String::from("staledata"),
+        ..Context::with_output(&mut output)
+    };
+
+    let result = extract_type_unit_and_name(&mut ctx, hist_metric);
+    assert!(result);
+    assert_eq!(ctx.typ, "histogram");
+    assert_eq!(ctx.name, "histo");
+    assert!(ctx.unit.is_none());
+}
+
+mod write_values {
+    use super::*;
+
+    fn strip_timestamps(mut text: String, timestamps: Vec<SystemTime>) -> String {
+        for ts in timestamps {
+            let ts_string = ts
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64()
+                .to_string();
+            text = text.replace(&ts_string, "<TIMESTAMP>");
+        }
+        text
+    }
+
+    #[test]
+    fn test_f64_sum() {
+        let metric = make_f64_counter_metric(vec![(1.5, vec![KeyValue::new("k", "v")])]);
+        let data = AggregatedMetrics::F64(MetricData::Sum(metric));
+
+        let mut output = String::new();
+        let mut ctx = Context {
+            attr_buffer: String::from("staledata"),
+            name: "my_f64_sum".to_owned(),
+            scope_name: "myscope",
+            ..Context::with_output(&mut output)
+        };
+        write_values(&mut ctx, &data).unwrap();
+        output = strip_timestamps(output, data.extract_timestamps());
+        assert_snapshot!(strip_otel_scope_name(&output));
+    }
+
+    #[test]
+    fn test_u64_gauge() {
+        let metric = make_u64_gauge_metric(vec![(99, vec![KeyValue::new("k", "v")])]);
+        let data = AggregatedMetrics::U64(MetricData::Gauge(metric));
+
+        let mut output = String::new();
+        let mut ctx = Context {
+            attr_buffer: String::from("staledata"),
+            name: "my_u64_gauge".to_owned(),
+            scope_name: "myscope",
+            ..Context::with_output(&mut output)
+        };
+        write_values(&mut ctx, &data).unwrap();
+        output = strip_timestamps(output, data.extract_timestamps());
+        assert_snapshot!(strip_otel_scope_name(&output));
+    }
+
+    #[cfg(not(feature = "experimental-histogram-min-max"))]
+    #[test]
+    fn test_u64_histogram() {
+        let metric = make_u64_histogram_metric(vec![(50, vec![KeyValue::new("k", "v")])]);
+        let data = AggregatedMetrics::U64(MetricData::Histogram(metric));
+
+        let mut output = String::new();
+        let mut ctx = Context {
+            attr_buffer: String::from("staledata"),
+            name: "my_u64_hist".to_owned(),
+            scope_name: "myscope",
+            ..Context::with_output(&mut output)
+        };
+        write_values(&mut ctx, &data).unwrap();
+        output = strip_timestamps(output, data.extract_timestamps());
+        assert_snapshot!(strip_otel_scope_name(&output));
+    }
+
+    #[test]
+    fn test_i64_gauge() {
+        let metric = make_i64_gauge_metric(vec![(-5, vec![KeyValue::new("k", "v")])]);
+        let data = AggregatedMetrics::I64(MetricData::Gauge(metric));
+
+        let mut output = String::new();
+        let mut ctx = Context {
+            attr_buffer: String::from("staledata"),
+            name: "my_i64_gauge".to_owned(),
+            scope_name: "myscope",
+            ..Context::with_output(&mut output)
+        };
+        write_values(&mut ctx, &data).unwrap();
+        output = strip_timestamps(output, data.extract_timestamps());
+        assert_snapshot!(strip_otel_scope_name(&output));
+    }
+
+    #[test]
+    fn test_i64_sum() {
+        let metric = make_i64_counter_metric(vec![(42, vec![KeyValue::new("k", "v")])]);
+        let data = AggregatedMetrics::I64(MetricData::Sum(metric));
+
+        let mut output = String::new();
+        let mut ctx = Context {
+            attr_buffer: String::from("staledata"),
+            name: "my_i64_sum".to_owned(),
+            scope_name: "myscope",
+            ..Context::with_output(&mut output)
+        };
+        write_values(&mut ctx, &data).unwrap();
+        output = strip_timestamps(output, data.extract_timestamps());
+        assert_snapshot!(strip_otel_scope_name(&output));
+    }
 }

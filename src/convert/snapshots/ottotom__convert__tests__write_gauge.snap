@@ -1,6 +1,6 @@
 ---
 source: src/convert/tests.rs
-expression: output
+expression: strip_otel_scope_name(&output)
 ---
-mygauge{kk="v1",otel_scope_name="myscope"} 4.2 <TIMESTAMP>
-mygauge{kk="v2",otel_scope_name="myscope"} 4.23 <TIMESTAMP>
+mygauge{kk="v1"} 4.2 <TIMESTAMP>
+mygauge{kk="v2"} 4.23 <TIMESTAMP>

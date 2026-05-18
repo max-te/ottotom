@@ -2,4 +2,4 @@
 source: src/convert/tests.rs
 expression: strip_otel_scope_name(&output)
 ---
-mycounter_total{kk="v1"} 125 <TIMESTAMP>
+my_u64_gauge{k="v"} 99 <TIMESTAMP>

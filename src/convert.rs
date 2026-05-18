@@ -110,6 +110,7 @@ impl WriteOpenMetrics for ResourceMetrics {
     }
 }
 
+#[cfg(feature = "otel_scope_info")]
 fn write_target_info<U: uWrite>(
     f: &mut U,
     resource: &opentelemetry_sdk::Resource,
@@ -245,7 +246,9 @@ fn write_values<U: uWrite>(
         AggregatedMetrics::I64(metric_data) => match metric_data {
             MetricData::Gauge(gauge) => write_gauge(ctx, gauge),
             MetricData::Sum(sum) => write_counter(ctx, sum),
-            MetricData::Histogram(histogram) => write_histogram(ctx, histogram),
+            MetricData::Histogram(_) => {
+                unimplemented!("signed histograms should not be constructible")
+            }
             _ => unimplemented!("only gauge/sum/histogram metrics should be constructible"),
         },
     }
