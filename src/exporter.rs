@@ -27,14 +27,14 @@ impl Default for OpenMetricsExporter {
 impl OpenMetricsExporter {
     /// Get a clone of the last-exported OpenMetrics text.
     pub fn text(&self) -> String {
-        self.buffer
-            .read()
-            .map(|t| t.as_str().to_owned())
-            .unwrap_or_else(|err| {
+        self.buffer.read().map_or_else(
+            |err| {
                 tracing::error!("Frontbuffer lock was poisoned: {err}");
                 // the frontbuffer-backbuffer swap should make sure we never see a corrupted buffer
                 err.into_inner().as_str().to_owned()
-            })
+            },
+            |t| t.as_str().to_owned(),
+        )
     }
 }
 
