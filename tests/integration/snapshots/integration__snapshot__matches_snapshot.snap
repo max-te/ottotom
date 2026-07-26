@@ -3,7 +3,7 @@ source: tests/integration/snapshot.rs
 expression: formatted
 ---
 # TYPE target info
-target_info{service_name="ottotom-testsupport",telemetry_sdk_language="rust",telemetry_sdk_name="opentelemetry",telemetry_sdk_version="0.32.0"} 1
+target_info{service_name="ottotom-testsupport",telemetry_sdk_language="rust",telemetry_sdk_name="opentelemetry",telemetry_sdk_version="<SDK_VERSION>"} 1
 # TYPE otel_scope info
 otel_scope_info{otel_scope_name="meter.1",otel_scope_version=""} 1
 # TYPE f64_gauge gauge
