@@ -149,10 +149,14 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
         match metric_data {
             MetricData::Gauge(_) => Ok("gauge"),
             MetricData::Sum(sum) => {
-                if sum.is_monotonic() {
-                    Ok("counter")
+                if sum.temporality() == Temporality::Cumulative {
+                    if sum.is_monotonic() {
+                        Ok("counter")
+                    } else {
+                        Ok("gauge")
+                    }
                 } else {
-                    Ok("gauge")
+                    Err(())
                 }
             }
             MetricData::Histogram(hist) => {
