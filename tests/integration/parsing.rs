@@ -8,7 +8,7 @@ pub fn test_output_is_parseable_by_openmetrics_parser() {
     let metrics = make_test_metrics();
 
     let formatted = metrics.to_openmetrics_string().unwrap();
-    println!("{}", &formatted);
+    println!("{formatted}");
 
     let parsed = parse_openmetrics(&formatted);
 

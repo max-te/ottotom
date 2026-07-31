@@ -24,10 +24,10 @@ fn strip_otel_scope_name(s: &str) -> String {
     const OTEL_SCOPE_NAME: &str = "otel_scope_name=\"myscope\"";
     while let Some(start) = result.find(OTEL_SCOPE_NAME) {
         result.replace_range(start..start + OTEL_SCOPE_NAME.len(), "");
-        if result.as_bytes()[start - 1..start] == [b','] {
+        if result.as_bytes()[start - 1..start] == *b"," {
             // Had preceding attributes
             result.replace_range(start - 1..start, "");
-        } else if result.as_bytes()[start..start + 1] == [b','] {
+        } else if result.as_bytes()[start..start + 1] == *b"," {
             // Was first attribute with trailing attributes
             result.replace_range(start..start + 1, "");
         }
