@@ -89,3 +89,15 @@ run = [
   "git tag v{{arg(version)}}",
   "cargo publish",
 ]
+
+[tasks.tracey-web]
+description = "Open the Tracey interactive dashboard"
+run = "tracey web"
+
+[tasks.tracey-status]
+description = "Show Tracey spec coverage overview"
+run = "tracey query status"
+
+[tasks.tracey-validate]
+description = "Validate Tracey spec/implementation references"
+run = "tracey query validate"
