@@ -1,0 +1,28 @@
+specs (
+    {
+        name openmetrics
+        include (docs/spec/openmetrics.md)
+        source_url https://github.com/prometheus/OpenMetrics
+        impls (
+            {
+                name rust
+                include (src/**/*.rs)
+                exclude (target/**)
+                test_include (src/**/tests.rs tests/**/*.rs testsupport/**/*.rs)
+            }
+        )
+    }
+    {
+        name otlp-to-prom
+        include (docs/spec/conversion.md)
+        source_url https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md
+        impls (
+            {
+                name rust
+                include (src/**/*.rs)
+                exclude (target/**)
+                test_include (src/**/tests.rs tests/**/*.rs testsupport/**/*.rs)
+            }
+        )
+    }
+)
