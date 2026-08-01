@@ -4,8 +4,9 @@ use insta::assert_snapshot;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
-    make_f64_counter_metric, make_f64_gauge_metric, make_i64_counter_metric, make_i64_gauge_metric,
-    make_u64_counter_metric, make_u64_counter_metric_handle, make_u64_gauge_metric,
+    make_f64_counter_metric, make_f64_exponential_histogram_metric_handle, make_f64_gauge_metric,
+    make_i64_counter_metric, make_i64_gauge_metric, make_u64_counter_metric,
+    make_u64_counter_metric_handle, make_u64_gauge_metric,
 };
 #[cfg(not(feature = "experimental-histogram-min-max"))]
 use ottotom_testsupport::metric_data::{make_f64_histogram_metric, make_u64_histogram_metric};
@@ -320,6 +321,34 @@ fn test_write_histogram() {
     let output = output.replace(&start_ts, "<START_TIMESTAMP>");
 
     assert_snapshot!(strip_otel_scope_name(&output));
+}
+
+#[test]
+// c[verify exphist.unimplemented]
+fn test_drop_exponential_histogram() {
+    let metric = make_f64_exponential_histogram_metric_handle(
+        "my_exphist",
+        None,
+        Some("i didn't know this was possible"),
+        vec![
+            (125.0, vec![KeyValue::new("kk", "v1")]),
+            (125.0, vec![KeyValue::new("kk", "v2")]),
+            (25.0, vec![KeyValue::new("kk", "v1")]),
+            (0.0, vec![KeyValue::new("kk", "v1")]),
+            (25.0, vec![KeyValue::new("kk", "v2")]),
+        ],
+    );
+
+    let mut output = String::new();
+
+    let mut ctx = Context::with_output(&mut output);
+    assert!(!extract_type_unit_and_name(&mut ctx, &metric));
+
+    metric
+        .resource_metrics()
+        .write_as_openmetrics(&mut output)
+        .unwrap();
+    assert!(!output.contains("my_exphist"));
 }
 
 #[test]
