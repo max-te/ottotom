@@ -26,7 +26,7 @@ Escaping MUST be applied: LF → `\n`, `"` → `\"`, `\` → `\\`.
 om[metadata.order]
 The ordering of metadata lines SHOULD be TYPE, UNIT, HELP.
 
-om[metadata.type]
+om[metadata.type-unknown]
 If no TYPE is exposed, the MetricFamily MUST be of type Unknown.
 
 om[metadata.unit-line]
@@ -148,6 +148,28 @@ om[timestamp.monotonic]
 If more than one MetricPoint is exposed for a Metric, then its MetricPoints MUST have monotonically increasing timestamps.
 
 ## MetricFamily and MetricSet
+
+### Data Model
+
+The exposition is organized as a hierarchy: a MetricSet contains MetricFamilies,
+each MetricFamily contains Metrics, and each Metric contains MetricPoints.
+
+A **MetricPoint** consists of a set of values, depending on the MetricFamily
+type. For example, a histogram MetricPoint has Count, Sum, and Bucket values,
+while a counter MetricPoint has a single Total value. MetricPoints of the same
+Metric are distinguished by their timestamps.
+
+A **Metric** is defined by a unique LabelSet within a MetricFamily and MUST
+contain a list of one or more MetricPoints. Metrics with the same name for a
+given MetricFamily SHOULD have the same set of label names in their LabelSet.
+
+A **MetricFamily** is a group of Metrics sharing a name, HELP, TYPE, and UNIT
+metadata. Every Metric within a MetricFamily MUST have a unique LabelSet.
+
+A **MetricSet** is the top level object exposed by OpenMetrics. It MUST consist
+of MetricFamilies and MAY be empty.
+
+### Ordering
 
 om[metricfamily.nointerleave]
 MetricFamilies MUST NOT be interleaved.
