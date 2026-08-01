@@ -187,7 +187,7 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
                 }
             }
             // c[impl exphist.unimplemented] - exponential histograms are rejected as input
-            _ => Err(()),
+            MetricData::ExponentialHistogram(_) => Err(()),
         }
     }
     match metric {

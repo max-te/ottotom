@@ -5,27 +5,77 @@ pub trait FastDisplay {
 }
 
 #[derive(Copy, Clone)]
-struct RyuDisplay<N: ryu::Float>(N);
+struct RyuDisplay(f64);
 
-impl<N: ryu::Float> uDisplay for RyuDisplay<N> {
+impl uDisplay for RyuDisplay {
     fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
     where
         W: ufmt::uWrite + ?Sized,
     {
-        let mut buffer = ryu::Buffer::new();
-        let mut formatted = buffer.format(self.0);
+        // om[impl numbers.canonical-inf]
+        if self.0.is_infinite() {
+            f.write_char(if self.0.is_sign_positive() { '+' } else { '-' })?;
+            f.write_str("Inf")
+        } else {
+            let mut buffer = ryu::Buffer::new();
+            let formatted = buffer.format(self.0);
 
-        // Remove trailing .0 to match f64 Display
-        formatted = formatted.strip_suffix(".0").unwrap_or(formatted);
-
-        f.write_str(formatted)
+            f.write_str(formatted)
+        }
     }
 }
 
+// om[impl numbers.float]
 impl FastDisplay for f64 {
     #[inline]
     fn fast_display(&self) -> impl uDisplay + Copy + use<> {
         RyuDisplay(*self)
+    }
+}
+
+#[cfg(test)]
+mod test_float_format {
+    use ufmt::uwrite;
+
+    use crate::format::FastDisplay;
+
+    #[test]
+    fn has_decimal_point() {
+        let mut s = String::new();
+        uwrite!(s, "{}", 5.0f64.fast_display()).unwrap();
+        assert_eq!(s, "5.0")
+    }
+
+    #[test]
+    fn has_decimals() {
+        let mut s = String::new();
+        uwrite!(s, "{}", 0.12345f64.fast_display()).unwrap();
+        assert_eq!(s, "0.12345")
+    }
+
+    #[test]
+    fn has_scientific_notation() {
+        let mut s = String::new();
+        uwrite!(s, "{}", 0.000000000012f64.fast_display()).unwrap();
+        assert_eq!(s, "1.2e-11")
+    }
+
+    #[test]
+    fn has_inf() {
+        let mut s = String::new();
+        uwrite!(s, "{}", f64::INFINITY.fast_display()).unwrap();
+        // om[verify numbers.canonical-inf]
+        assert_eq!(s, "+Inf");
+        s.clear();
+        uwrite!(s, "{}", f64::NEG_INFINITY.fast_display()).unwrap();
+        assert_eq!(s, "-Inf")
+    }
+
+    #[test]
+    fn has_nan() {
+        let mut s = String::new();
+        uwrite!(s, "{}", f64::NAN.fast_display()).unwrap();
+        assert_eq!(s, "NaN");
     }
 }
 

@@ -185,7 +185,7 @@ fn test_to_timestamp() {
     let timestamp = to_timestamp(time);
     let mut output = String::new();
     uwrite!(output, "{}", timestamp).unwrap();
-    assert_eq!(output, "1625097600");
+    assert_eq!(output, "1625097600.0");
 }
 
 #[cfg(feature = "otel_scope_info")]
