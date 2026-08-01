@@ -184,18 +184,19 @@ metrics with the delta aggregation temporality are dropped.
 
 ## Summaries
 
-c[summary.count]
+> Summaries don't exist in the `opentelemetry-rust` SDK data model,
+> only at the protocol layer for Prometheus summaries.
+> Thus, these rules are not applicable.
+
 An OpenTelemetry Summary MUST be converted to a Prometheus metric family with
 a single `{name}_count` metric denoting the count field of the summary.
 All attributes of the summary point are converted to Prometheus labels.
 
-c[summary.sum]
 An OpenTelemetry Summary MUST be converted to a Prometheus metric family with a
 `{name}_sum` metric denoting the sum field of the summary, reported
 only if the sum is positive and monotonic. All attributes of the summary
 point are converted to Prometheus labels.
 
-c[summary.quantile]
 An OpenTelemetry Summary MUST be converted to a Prometheus metric family with 
 A series of `{name}` metric points that contain all attributes of the
 summary point recorded as labels.  Additionally, a label, denoted as
@@ -204,7 +205,6 @@ be the stringified floating point value of quantiles (between 0.0 and 1.0),
 starting from lowest to highest, and all being non-negative.  The value of
 each point is the computed value of the quantile point.
 
-c[summary.created]
 Summaries with `StartTimeUnixNano` set SHOULD export the `{name}_created` metric.
 
 
