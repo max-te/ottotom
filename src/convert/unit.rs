@@ -10,6 +10,7 @@ use std::borrow::Cow;
 
 const NON_APPLICABLE_ON_PER_UNIT: [&str; 8] = ["1", "d", "h", "min", "s", "ms", "us", "ns"];
 
+// c[impl metadata.unit-convert] - abbreviation → full word, brackets dropped, "1"→"ratio", "foo/bar"→"foo_per_bar"
 pub(crate) fn get_unit_suffixes(unit: &str) -> Option<Cow<'static, str>> {
     // no unit return early
     if unit.is_empty() {
@@ -105,6 +106,7 @@ mod test {
     use super::*;
 
     #[test]
+    // c[verify metadata.unit-convert]
     fn test_get_unit_suffixes() {
         let test_cases = vec![
             // Direct match

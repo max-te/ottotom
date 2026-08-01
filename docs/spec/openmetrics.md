@@ -29,6 +29,9 @@ The ordering of metadata lines SHOULD be TYPE, UNIT, HELP.
 om[metadata.type-unknown]
 If no TYPE is exposed, the MetricFamily MUST be of type Unknown.
 
+om[metadta.type-values]
+The TYPE value MUST be one of "unknown", "gauge", "counter", "stateset", "info", "histogram", "gaugehistogram", and "summary".
+
 om[metadata.unit-line]
 If a unit is specified it MUST be provided in a UNIT metadata line.
 

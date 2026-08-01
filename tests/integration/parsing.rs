@@ -4,6 +4,7 @@ use ottotom::convert::WriteOpenMetrics;
 use ottotom_testsupport::resource_metrics::make_test_metrics;
 
 #[test]
+// om[verify text.utf8] - the parser only accepts valid UTF-8 `&str` and rejects a leading BOM
 pub fn test_output_is_parseable_by_openmetrics_parser() {
     let metrics = make_test_metrics();
 

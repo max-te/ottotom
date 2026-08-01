@@ -8,6 +8,10 @@ use ottotom_testsupport::resource_metrics::make_test_metrics;
 use ottotom_testsupport::timestamps::get_all_timestamps;
 
 #[test]
+// om[verify metadata.order] - snapshot locks TYPE/UNIT/HELP ordering
+// om[verify info.value] - info samples carry value 1
+// om[verify metricfamily.nointerleave]
+// c[verify resource.target-labels]
 fn matches_snapshot() {
     let metrics = make_test_metrics();
     let erasable_timestamps = get_all_timestamps(&metrics);

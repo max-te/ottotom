@@ -110,6 +110,9 @@ Monotonic Sum metric points with `StartTimeUnixNano` SHOULD export the `{name}_c
 ## Histograms
 
 c[histogram.count]
+A cumulative Histogram MUST be converted to a Prometheus metric family.
+
+c[histogram.count]
 A cumulative Histogram MUST be converted to a Prometheus metric family with
 a single `{name}_count` metric denoting the count field of the histogram. All attributes of the histogram point are converted to Prometheus labels.
 

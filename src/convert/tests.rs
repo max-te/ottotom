@@ -37,6 +37,7 @@ fn strip_otel_scope_name(s: &str) -> String {
 }
 
 #[test]
+// c[verify metadata.name-sanitize]
 fn test_write_sanitized_name() {
     let mut output = String::new();
 
@@ -81,6 +82,8 @@ fn test_write_sanitized_name() {
 }
 
 #[test]
+// om[verify escaping.chars]
+// om[verify strings.utf8]
 fn test_write_escaped() {
     let mut output = String::new();
 
@@ -130,6 +133,7 @@ fn test_hash_attrs() {
 }
 
 #[test]
+// c[verify mattrs.to-labels]
 fn test_write_attrs() {
     let mut output = String::new();
     let attrs = [
@@ -155,6 +159,7 @@ fn test_write_attrs() {
 }
 
 #[test]
+// c[verify scope.config-disable] - behavior differs with/without the feature
 fn test_make_scope_name_attrs() {
     let scope_name = "test_scope";
     let attr = make_scope_name_attrs(scope_name);
@@ -171,6 +176,7 @@ fn test_make_scope_name_attrs() {
 }
 
 #[test]
+// om[verify timestamp.unix]
 fn test_to_timestamp() {
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -184,6 +190,8 @@ fn test_to_timestamp() {
 
 #[cfg(feature = "otel_scope_info")]
 #[test]
+// c[verify scope.info]
+// c[verify scope.name-version]
 fn test_write_otel_scope_info() {
     let resource_metrics = make_test_metrics();
     let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
@@ -194,6 +202,7 @@ fn test_write_otel_scope_info() {
     assert!(output.contains("# TYPE otel_scope info"));
     assert!(output.contains("otel_scope_info{"));
     assert!(output.contains("otel_scope_name=\"meter.1\""));
+    assert!(output.contains("otel_scope_version="));
 }
 
 #[test]
@@ -245,6 +254,7 @@ fn test_write_gauge() {
 }
 
 #[test]
+// c[verify sum.cumulative-monotonic]
 fn test_write_counter() {
     let metric = make_u64_counter_metric(vec![(125, vec![KeyValue::new("kk", "v1")])]);
     let ts = metric
@@ -270,6 +280,12 @@ fn test_write_counter() {
 
 #[cfg(not(feature = "experimental-histogram-min-max"))]
 #[test]
+// om[verify metric.nointerleave] - all samples of one LabelSet (Metric) precede the next
+// om[verify metricpoint.nointerleave] - count/sum/bucket samples of one point are contiguous
+// om[verify histogram.inf-bucket]
+// c[verify histogram.created]
+// c[verify histogram.count]
+// c[verify histogram.bucket.inf]
 fn test_write_histogram() {
     let metric = make_f64_histogram_metric(vec![
         (125.0, vec![KeyValue::new("kk", "v1")]),
@@ -313,20 +329,30 @@ fn test_write_as_openmetrics() {
     resource_metrics.write_as_openmetrics(&mut output).unwrap();
 
     // Verify the output has all expected structural elements
+    // c[verify resource.target-info]
     assert!(output.starts_with("# TYPE target info\n") == cfg!(feature = "otel_scope_info"));
     assert!(output.contains("target_info{") == cfg!(feature = "otel_scope_info"));
+    // c[verify scope.info]
     assert!(output.contains("# TYPE otel_scope info\n") == cfg!(feature = "otel_scope_info"));
     assert!(output.contains("otel_scope_info{") == cfg!(feature = "otel_scope_info"));
+    // c[verify metadata.type]
     assert!(output.contains("# TYPE f64_gauge gauge\n"));
+    // c[verify metadata.help-description]
     assert!(output.contains("# HELP f64_gauge "));
     assert!(output.contains("# TYPE u64_counter_seconds counter\n"));
+    // om[verify metadata.unit-line]
     assert!(output.contains("# UNIT u64_counter_seconds seconds\n"));
     assert!(output.contains("u64_counter_seconds_total{"));
     assert!(output.contains("# TYPE histo histogram\n"));
+    // c[verify histogram.created]
     assert!(output.contains("histo_created{"));
+    // c[verify histogram.count]
     assert!(output.contains("histo_count{"));
+    // c[verify histogram.sum]
     assert!(output.contains("histo_sum{"));
+    // c[verify histogram.bucket]
     assert!(output.contains("histo_bucket{"));
+    // om[verify text.eof]
     assert!(output.ends_with("# EOF\n"));
 }
 
@@ -360,6 +386,7 @@ fn test_extract_type_unit_and_name_with_unit() {
     let result = extract_type_unit_and_name(&mut ctx, counter_metric);
     assert!(result);
     assert_eq!(ctx.typ, "counter");
+    // om[verify metadata.unit-suffix]
     assert_eq!(ctx.name, "u64_counter_seconds");
     assert_eq!(ctx.unit, Some(std::borrow::Cow::Borrowed("seconds")));
 }
@@ -405,6 +432,7 @@ mod write_values {
     }
 
     #[test]
+    // om[verify numbers.float]
     fn test_f64_sum() {
         let metric = make_f64_counter_metric(vec![(1.5, vec![KeyValue::new("k", "v")])]);
         let data = AggregatedMetrics::F64(MetricData::Sum(metric));
@@ -422,6 +450,7 @@ mod write_values {
     }
 
     #[test]
+    // om[verify numbers.integer]
     fn test_u64_gauge() {
         let metric = make_u64_gauge_metric(vec![(99, vec![KeyValue::new("k", "v")])]);
         let data = AggregatedMetrics::U64(MetricData::Gauge(metric));
@@ -440,6 +469,12 @@ mod write_values {
 
     #[cfg(not(feature = "experimental-histogram-min-max"))]
     #[test]
+    // c[verify histogram.bucket]
+    // c[verify histogram.bucket.le]
+    // c[verify histogram.bucket.cumulative]
+    // c[verify histogram.count]
+    // c[verify histogram.sum]
+    // c[verify histogram.created]
     fn test_u64_histogram() {
         let metric = make_u64_histogram_metric(vec![(50, vec![KeyValue::new("k", "v")])]);
         let data = AggregatedMetrics::U64(MetricData::Histogram(metric));
@@ -457,6 +492,7 @@ mod write_values {
     }
 
     #[test]
+    // c[verify gauge-default]
     fn test_i64_gauge() {
         let metric = make_i64_gauge_metric(vec![(-5, vec![KeyValue::new("k", "v")])]);
         let data = AggregatedMetrics::I64(MetricData::Gauge(metric));
@@ -474,6 +510,7 @@ mod write_values {
     }
 
     #[test]
+    // c[verify sum.cumulative-nonmonotonic.default] - i64_up_down_counter is non-monotonic
     fn test_i64_sum() {
         let metric = make_i64_counter_metric(vec![(42, vec![KeyValue::new("k", "v")])]);
         let data = AggregatedMetrics::I64(MetricData::Sum(metric));

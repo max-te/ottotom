@@ -18,6 +18,7 @@ mod tests;
 mod unit;
 
 /// The mime type of the text produced by this metrics formatter.
+// om[impl text.contenttype]
 pub const MIME_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 /// Trait to write the metrics data in OpenMetrics text format.
@@ -25,6 +26,7 @@ pub trait WriteOpenMetrics {
     /// Writes the metrics into `f` in OpenMetrics text format.
     fn write_as_openmetrics(&self, f: &mut impl Write) -> std::fmt::Result;
     /// Creates and returns a [String] of the metrics data in OpenMetrics text format.
+    /// om[impl text.utf8] - output is always a valid UTF-8 String
     fn to_openmetrics_string(&self) -> Result<String, std::fmt::Error> {
         let mut out = String::new();
         self.write_as_openmetrics(&mut out)?;
@@ -85,6 +87,7 @@ impl WriteOpenMetrics for ResourceMetrics {
         let mut scopes: Vec<&ScopeMetrics> = self.scope_metrics().collect();
         scopes.sort_unstable_by_key(|s| s.scope().name());
 
+        // c[impl scope.config-disable] - the cargo feature is the configuration switch
         #[cfg(feature = "otel_scope_info")]
         write_otel_scope_info(&mut ctx.f, &scopes)?;
 
@@ -95,29 +98,37 @@ impl WriteOpenMetrics for ResourceMetrics {
             let mut metrics: Vec<_> = scope.metrics().collect();
             metrics.sort_unstable_by_key(|met| met.name());
 
+            // om[impl metricfamily.nointerleave] - each MetricFamily is fully written before the next
             for metric in metrics {
                 if extract_type_unit_and_name(&mut ctx, metric) {
                     write_header(&mut ctx, metric.description())?;
                     write_values(&mut ctx, metric.data())?;
                 } else {
                     #[cfg(feature = "tracing")]
+                    // c[impl metadata.drop-warn]
                     tracing::warn!("Unsupported metric type {metric:?}");
                 }
             }
         }
+        // om[impl text.eof]
         f.write_str("# EOF\n")?;
         Ok(())
     }
 }
 
 #[cfg(feature = "otel_scope_info")]
+// c[impl resource.target-info]
 fn write_target_info<U: uWrite>(
     f: &mut U,
     resource: &opentelemetry_sdk::Resource,
 ) -> Result<(), U::Error> {
+    // c[impl resource.target-labels] - info-typed, only resource attributes
     f.write_str("# TYPE target info\n")?;
+    // om[impl info.suffix]
     f.write_str("target_info{")?;
+    // c[impl resource.attrs-key-sanitize] - resource attrs go through the same sanitization
     write_attrs_tuple(f, resource.iter())?;
+    // om[impl info.value]
     f.write_str("} 1\n")?;
     Ok(())
 }
@@ -134,6 +145,7 @@ fn extract_type_unit_and_name(
 
     ctx.name.clear();
     let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name());
+    // om[impl metadata.unit-suffix]
     if let Some(ref unit) = ctx.unit {
         ctx.name.push('_');
         ctx.name.push_str(unit);
@@ -151,21 +163,27 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
             MetricData::Sum(sum) => {
                 if sum.temporality() == Temporality::Cumulative {
                     if sum.is_monotonic() {
+                        // c[impl sum.cumulative-monotonic]
                         Ok("counter")
                     } else {
+                        // c[impl sum.cumulative-nonmonotonic.default]
                         Ok("gauge")
                     }
                 } else {
+                    // c[impl sum.drop]
                     Err(())
                 }
             }
             MetricData::Histogram(hist) => {
                 if hist.temporality() == Temporality::Cumulative {
+                    // c[impl histogram.bucket]
                     Ok("histogram")
                 } else {
+                    // c[impl histogram.delta]
                     Err(())
                 }
             }
+            // c[impl exphist.unimplemented] - exponential histograms are rejected as input
             _ => Err(()),
         }
     }
@@ -177,25 +195,32 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
 }
 
 /// Write the current metric's metadata. Make sure to call [`extract_type_unit_and_name`] first.
+// om[impl metadata.order] - TYPE is written first, then UNIT, then HELP
+// om[impl metadata.unique] - at most one TYPE/UNIT/HELP line per family
 #[inline]
 fn write_header<U: uWrite>(ctx: &mut Context<'_, U>, description: &str) -> Result<(), U::Error> {
     let Context {
         f, name, unit, typ, ..
     } = ctx;
+    // c[impl metadata.type]
+    // om[impl text.lineending]
     for x in &["# TYPE ", name, " ", typ, "\n"] {
         f.write_str(x)?;
     }
-
+    // om[impl metadata.unit-line]
     if let Some(unit) = unit {
+        // om[impl text.lineending]
         for x in &["# UNIT ", name, " ", unit, "\n"] {
             f.write_str(x)?;
         }
     }
+    // c[impl metadata.help-description]
     if !description.is_empty() {
         f.write_str("# HELP ")?;
         f.write_str(name)?;
         f.write_str(" ")?;
         write_escaped(f, description)?;
+        // om[impl text.lineending]
         f.write_char('\n')?;
     }
     Ok(())
@@ -208,9 +233,11 @@ fn write_otel_scope_info<U: uWrite>(
     f: &mut U,
     metrics: &'_ Vec<&ScopeMetrics>,
 ) -> Result<(), U::Error> {
+    // c[impl scope.info]
     f.write_str("# TYPE otel_scope info\n")?;
 
     for scope in metrics {
+        // c[impl scope.name-version]
         let otel_attrs = &[
             KeyValue::new("otel_scope_name", scope.scope().name().to_owned()),
             KeyValue::new(
@@ -219,7 +246,9 @@ fn write_otel_scope_info<U: uWrite>(
             ),
         ];
         f.write_str("otel_scope_info{")?;
+        // c[impl scope.attribute-labels]
         write_attrs(f, otel_attrs.iter().chain(scope.scope().attributes()))?;
+        // om[impl info.value]
         f.write_str("} 1\n")?;
     }
     Ok(())
@@ -268,6 +297,8 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
     ctx.attr_buffer.clear();
     let attrs = &mut ctx.attr_buffer;
     let Ok(()) = write_attrs(attrs, scope_name_attrs.iter());
+    // c[impl histogram.created]
+    // FIXME: _created should be once per label set
     uwriteln!(
         ctx.f,
         "{}_created{{{}}} {} {}"
@@ -285,10 +316,13 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
     let mut points: Vec<_> = histogram.data_points().collect();
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
 
+    // om[impl metric.nointerleave] - each point's LabelSet is written contiguously
     for point in points {
         attrs.clear();
         let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
 
+        // om[impl metricpoint.nointerleave] - all value samples of one MetricPoint are written contiguously
+        // c[impl histogram.count]
         uwriteln!(
             ctx.f,
             "{}_count{{{}}} {} {}",
@@ -336,8 +370,11 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
             attrs.push(',');
         }
         let mut cumulative_count = 0;
+        // c[impl histogram.bucket]
         for (bound, count) in std::iter::zip(point.bounds(), point.bucket_counts()) {
+            // c[impl histogram.bucket.cumulative]
             cumulative_count += count;
+            // c[impl histogram.bucket.le]
             uwriteln!(
                 // Not using write! here is a ~19% speedup
                 ctx.f,
@@ -355,6 +392,8 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
             //     count = cumulative_count.fast_display(),
             // )?;
         }
+        // om[impl histogram.inf-bucket]
+        // c[impl histogram.bucket.inf]
         uwriteln!(
             ctx.f,
             "{}_bucket{{{}le=\"+Inf\"}} {} {}",
@@ -460,6 +499,7 @@ fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
     f: &mut U,
     attrs: I,
 ) -> Result<(), U::Error> {
+    // c[impl mattrs.to-labels] - attribute keys/values are emitted as label name/value pairs
     let mut first = true;
 
     let mut attrs: Vec<_> = attrs.collect();
@@ -471,6 +511,7 @@ fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
         }
         write_sanitized_name(f, attr.0.as_str())?;
         f.write_str("=\"")?;
+        // c[impl mattrs.type-conversion] - non-string values are stringified
         write_escaped(f, &attr.1.as_str())?;
         f.write_char('"')?;
         first = false;
@@ -492,6 +533,7 @@ fn hash_attrs<'a, I: Iterator<Item = &'a KeyValue>>(attrs: I) -> u64 {
 
 /// Writes to `f` the contents of `value` as an escaped string. Does not put quotes around the value.
 /// The chars to escape are `\`, `"` and `\n`.
+// om[impl escaping.chars]
 fn write_escaped<U: uWrite>(f: &mut U, value: &str) -> Result<(), U::Error> {
     #[inline]
     fn next_escape_char(bytes: &[u8]) -> Option<usize> {
@@ -516,11 +558,13 @@ fn write_escaped<U: uWrite>(f: &mut U, value: &str) -> Result<(), U::Error> {
         }?;
         bytes = &tail[1..];
     }
+    // om[impl strings.utf8] - strings are written as valid UTF-8
     f.write_str(str::from_utf8(bytes).expect("escaped string should be valid utf-8"))
 }
 
 /// Write `name` as an OpenMetrics metrics name, replacing any illegal characters with underscore according to the
 /// [spec](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#metric-metadata-1).
+// c[impl metadata.name-sanitize]
 fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str) -> Result<(), U::Error> {
     // Multiple consecutive `_` characters MUST be replaced with a single `_` character
     let mut previous_was_underscore = false;
@@ -546,6 +590,7 @@ fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str) -> Result<(), U::Error
 }
 
 /// Get a [`Display`] implementation which shows [`SystemTime`] as a unix timestamp in float seconds.
+// om[impl timestamp.unix]
 fn to_timestamp(time: SystemTime) -> impl uDisplay {
     let ts = time
         .duration_since(SystemTime::UNIX_EPOCH)
