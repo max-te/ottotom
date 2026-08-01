@@ -5,7 +5,7 @@ use opentelemetry::KeyValue;
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
     make_f64_counter_metric, make_f64_gauge_metric, make_i64_counter_metric, make_i64_gauge_metric,
-    make_u64_counter_metric, make_u64_gauge_metric,
+    make_u64_counter_metric, make_u64_counter_metric_handle, make_u64_gauge_metric,
 };
 #[cfg(not(feature = "experimental-histogram-min-max"))]
 use ottotom_testsupport::metric_data::{make_f64_histogram_metric, make_u64_histogram_metric};
@@ -367,15 +367,12 @@ fn test_to_openmetrics_string_trait_method() {
 
 #[test]
 fn test_extract_type_unit_and_name_with_unit() {
-    let resource_metrics = make_test_metrics();
-    let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
-
-    // Find the u64.counter metric which has unit "s" -> suffix "seconds"
-    let counter_metric = scopes
-        .iter()
-        .flat_map(|s| s.metrics())
-        .find(|m| m.name() == "u64.counter")
-        .expect("u64.counter metric should exist");
+    let handle = make_u64_counter_metric_handle(
+        "u64.counter",
+        Some("s"),
+        None,
+        vec![(125, vec![KeyValue::new("kk", "v1")])],
+    );
 
     let mut output = String::new();
     let mut ctx = Context {
@@ -383,12 +380,34 @@ fn test_extract_type_unit_and_name_with_unit() {
         ..Context::with_output(&mut output)
     };
 
-    let result = extract_type_unit_and_name(&mut ctx, counter_metric);
+    let result = extract_type_unit_and_name(&mut ctx, &handle);
     assert!(result);
     assert_eq!(ctx.typ, "counter");
     // om[verify metadata.unit-suffix]
+    // c[verify metadata.unit-suffix]
     assert_eq!(ctx.name, "u64_counter_seconds");
     assert_eq!(ctx.unit, Some(std::borrow::Cow::Borrowed("seconds")));
+}
+
+#[test]
+fn test_do_not_duplicate_unit() {
+    let handle = make_u64_counter_metric_handle(
+        "u64.per-second",
+        Some("1/s"),
+        None,
+        vec![(125, vec![KeyValue::new("kk", "v1")])],
+    );
+    let mut output = String::new();
+    let mut ctx = Context {
+        attr_buffer: String::from("staledata"),
+        ..Context::with_output(&mut output)
+    };
+    let result = extract_type_unit_and_name(&mut ctx, &handle);
+    assert!(result);
+    // om[verify metadata.unit-suffix]
+    // c[verify metadata.unit-suffix]
+    assert_eq!(ctx.name, "u64_per_second");
+    assert_eq!(ctx.unit, Some(std::borrow::Cow::Borrowed("per_second")));
 }
 
 #[test]

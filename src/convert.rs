@@ -146,7 +146,10 @@ fn extract_type_unit_and_name(
     ctx.name.clear();
     let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name());
     // om[impl metadata.unit-suffix]
-    if let Some(ref unit) = ctx.unit {
+    // c[impl metadata.unit-suffix]
+    if let Some(ref unit) = ctx.unit
+        && !ctx.name.ends_with(unit.as_ref())
+    {
         ctx.name.push('_');
         ctx.name.push_str(unit);
     }
