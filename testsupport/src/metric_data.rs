@@ -4,9 +4,11 @@ use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Meter, MeterProvider};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::metrics::data::{
-    AggregatedMetrics, Gauge, Histogram, Metric, MetricData, ResourceMetrics, Sum,
+    AggregatedMetrics, ExponentialHistogram, Gauge, Histogram, Metric, MetricData, ResourceMetrics,
+    Sum,
 };
 use opentelemetry_sdk::metrics::reader::MetricReader;
+use opentelemetry_sdk::metrics::{Aggregation, InstrumentKind, MeterProviderBuilder, Stream};
 
 use crate::reader::TestMetricsReader;
 
@@ -18,10 +20,33 @@ struct TestMeter {
 
 impl TestMeter {
     fn new() -> Self {
+        Self::new_with(SdkMeterProvider::builder())
+    }
+
+    /// Configures the provider with a view that converts histogram instruments
+    /// to the Base2 exponential histogram aggregation.
+    ///
+    /// See https://github.com/open-telemetry/opentelemetry-rust/issues/2111#issuecomment-3488799894
+    fn new_exponential_histogram() -> Self {
+        Self::new_with(SdkMeterProvider::builder().with_view(|inst| {
+            if let InstrumentKind::Histogram = inst.kind() {
+                Stream::builder()
+                    .with_aggregation(Aggregation::Base2ExponentialHistogram {
+                        max_size: 160,
+                        max_scale: 20,
+                        record_min_max: true,
+                    })
+                    .build()
+                    .ok()
+            } else {
+                None
+            }
+        }))
+    }
+
+    fn new_with(builder: MeterProviderBuilder) -> Self {
         let reader = TestMetricsReader::default();
-        let provider = SdkMeterProvider::builder()
-            .with_reader(reader.clone())
-            .build();
+        let provider = builder.with_reader(reader.clone()).build();
         let meter = provider.meter("test_meter");
 
         Self {
@@ -134,7 +159,7 @@ trait MakeMetric {
 }
 
 macro_rules! impl_make_metric {
-    ($ValueType:ident, $instrumentMethod:ident, $recordMethod:ident for $($For:tt)*) => {
+    ($meterCtor:ident, $ValueType:ident, $instrumentMethod:ident, $recordMethod:ident for $($For:tt)*) => {
         impl MakeMetric for $($For)* {
             type ValueType = $ValueType;
 
@@ -144,7 +169,7 @@ macro_rules! impl_make_metric {
                 description: Option<&'static str>,
                 observations: I,
             ) -> TestMetric {
-                let testmeter = TestMeter::new();
+                let testmeter = TestMeter::$meterCtor();
                 let mut builder = testmeter.meter.$instrumentMethod(name);
                 if let Some(unit) = unit {
                     builder = builder.with_unit(unit);
@@ -178,7 +203,7 @@ macro_rules! impl_make_metric {
 }
 
 impl_from_aggregated!(F64, Gauge for Gauge<f64>);
-impl_make_metric!(f64, f64_gauge, record for Gauge<f64>);
+impl_make_metric!(new, f64, f64_gauge, record for Gauge<f64>);
 
 pub fn make_f64_gauge_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Gauge<f64> {
     Gauge::<f64>::make_metric(values)
@@ -233,7 +258,7 @@ fn test_make_f64_gauge_metric_handle() {
 }
 
 impl_from_aggregated!(U64, Gauge for Gauge<u64>);
-impl_make_metric!(u64, u64_gauge, record for Gauge<u64>);
+impl_make_metric!(new, u64, u64_gauge, record for Gauge<u64>);
 
 pub fn make_u64_gauge_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Gauge<u64> {
     Gauge::<u64>::make_metric(values)
@@ -282,7 +307,7 @@ fn test_make_u64_gauge_metric_handle() {
 }
 
 impl_from_aggregated!(I64, Gauge for Gauge<i64>);
-impl_make_metric!(i64, i64_gauge, record for Gauge<i64>);
+impl_make_metric!(new, i64, i64_gauge, record for Gauge<i64>);
 
 pub fn make_i64_gauge_metric(values: Vec<(i64, Vec<KeyValue>)>) -> Gauge<i64> {
     Gauge::<i64>::make_metric(values)
@@ -331,7 +356,7 @@ fn test_make_i64_gauge_metric_handle() {
 }
 
 impl_from_aggregated!(U64, Sum for Sum<u64>);
-impl_make_metric!(u64, u64_counter, add for Sum<u64>);
+impl_make_metric!(new, u64, u64_counter, add for Sum<u64>);
 
 pub fn make_u64_counter_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Sum<u64> {
     Sum::<u64>::make_metric(values)
@@ -380,7 +405,7 @@ fn test_make_u64_counter_metric_handle() {
 }
 
 impl_from_aggregated!(F64, Sum for Sum<f64>);
-impl_make_metric!(f64, f64_counter, add for Sum<f64>);
+impl_make_metric!(new, f64, f64_counter, add for Sum<f64>);
 
 pub fn make_f64_counter_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Sum<f64> {
     Sum::<f64>::make_metric(values)
@@ -429,7 +454,7 @@ fn test_make_f64_counter_metric_handle() {
 }
 
 impl_from_aggregated!(I64, Sum for Sum<i64>);
-impl_make_metric!(i64, i64_up_down_counter, add for Sum<i64>);
+impl_make_metric!(new, i64, i64_up_down_counter, add for Sum<i64>);
 
 pub fn make_i64_counter_metric(values: Vec<(i64, Vec<KeyValue>)>) -> Sum<i64> {
     Sum::<i64>::make_metric(values)
@@ -479,7 +504,7 @@ fn test_make_i64_counter_metric_handle() {
 }
 
 impl_from_aggregated!(F64, Histogram for Histogram<f64>);
-impl_make_metric!(f64, f64_histogram, record for Histogram<f64>);
+impl_make_metric!(new, f64, f64_histogram, record for Histogram<f64>);
 
 pub fn make_f64_histogram_metric(values: Vec<(f64, Vec<KeyValue>)>) -> Histogram<f64> {
     Histogram::<f64>::make_metric(values)
@@ -543,7 +568,7 @@ fn test_make_f64_histogram_metric_handle() {
 }
 
 impl_from_aggregated!(U64, Histogram for Histogram<u64>);
-impl_make_metric!(u64, u64_histogram, record for Histogram<u64>);
+impl_make_metric!(new, u64, u64_histogram, record for Histogram<u64>);
 
 pub fn make_u64_histogram_metric(values: Vec<(u64, Vec<KeyValue>)>) -> Histogram<u64> {
     Histogram::<u64>::make_metric(values)
@@ -598,6 +623,157 @@ fn test_make_u64_histogram_metric_handle() {
 
     assert_eq!(metric.name(), "my_u64_histogram");
     let histogram = metric.extract::<Histogram<u64>>().unwrap();
+    assert_eq!(histogram.data_points().count(), values.len());
+    assert_eq!(
+        histogram.data_points().map(|dp| dp.sum()).sum::<u64>(),
+        values.iter().map(|v| v.0).sum()
+    );
+}
+
+impl_from_aggregated!(F64, ExponentialHistogram for ExponentialHistogram<f64>);
+impl_make_metric!(
+    new_exponential_histogram,
+    f64,
+    f64_histogram,
+    record for ExponentialHistogram<f64>
+);
+
+pub fn make_f64_exponential_histogram_metric(
+    values: Vec<(f64, Vec<KeyValue>)>,
+) -> ExponentialHistogram<f64> {
+    ExponentialHistogram::<f64>::make_metric(values)
+}
+
+pub fn make_f64_exponential_histogram_metric_handle(
+    name: &'static str,
+    unit: Option<&'static str>,
+    description: Option<&'static str>,
+    values: Vec<(f64, Vec<KeyValue>)>,
+) -> TestMetric {
+    ExponentialHistogram::<f64>::make_metric_handle(name, unit, description, values)
+}
+
+#[test]
+fn test_make_f64_exponential_histogram_metric() {
+    let values = &[
+        (2.5, vec![KeyValue::new("key", "value")]),
+        (3.0, vec![KeyValue::new("key", "value")]),
+        (25.0, vec![]),
+    ];
+    let histogram = make_f64_exponential_histogram_metric(values.to_vec());
+
+    assert_eq!(histogram.data_points().count(), 2);
+    for point in histogram.data_points() {
+        assert!(point.scale() > 0);
+        assert_eq!(
+            point.count(),
+            if point.attributes().count() == 0 {
+                1
+            } else {
+                2
+            }
+        );
+    }
+    assert_eq!(
+        histogram.data_points().map(|dp| dp.sum()).sum::<f64>(),
+        values.iter().map(|v| v.0).sum()
+    );
+    assert_eq!(
+        histogram.data_points().map(|dp| dp.count()).sum::<usize>(),
+        values.len()
+    );
+}
+
+#[test]
+fn test_make_f64_exponential_histogram_metric_handle() {
+    let values = vec![(2.5, vec![KeyValue::new("key", "value")]), (25.0, vec![])];
+    let metric = make_f64_exponential_histogram_metric_handle(
+        "my_exponential_histogram",
+        Some("s"),
+        Some("An exponential histogram"),
+        values.clone(),
+    );
+
+    assert_eq!(metric.name(), "my_exponential_histogram");
+    assert_eq!(metric.unit(), "s");
+    assert_eq!(metric.description(), "An exponential histogram");
+    assert_eq!(metric.resource_metrics().scope_metrics().count(), 1);
+
+    let histogram = metric.extract::<ExponentialHistogram<f64>>().unwrap();
+    assert_eq!(histogram.data_points().count(), values.len());
+    assert_eq!(
+        histogram.data_points().map(|dp| dp.sum()).sum::<f64>(),
+        values.iter().map(|v| v.0).sum()
+    );
+    assert!(metric.extract::<Histogram<f64>>().is_none());
+}
+
+impl_from_aggregated!(U64, ExponentialHistogram for ExponentialHistogram<u64>);
+impl_make_metric!(
+    new_exponential_histogram,
+    u64,
+    u64_histogram,
+    record for ExponentialHistogram<u64>
+);
+
+pub fn make_u64_exponential_histogram_metric(
+    values: Vec<(u64, Vec<KeyValue>)>,
+) -> ExponentialHistogram<u64> {
+    ExponentialHistogram::<u64>::make_metric(values)
+}
+
+pub fn make_u64_exponential_histogram_metric_handle(
+    name: &'static str,
+    unit: Option<&'static str>,
+    description: Option<&'static str>,
+    values: Vec<(u64, Vec<KeyValue>)>,
+) -> TestMetric {
+    ExponentialHistogram::<u64>::make_metric_handle(name, unit, description, values)
+}
+
+#[test]
+fn test_make_u64_exponential_histogram_metric() {
+    let values = &[
+        (2, vec![KeyValue::new("key", "value")]),
+        (3, vec![KeyValue::new("key", "value")]),
+        (25, vec![]),
+    ];
+    let histogram = make_u64_exponential_histogram_metric(values.to_vec());
+
+    assert_eq!(histogram.data_points().count(), 2);
+    for point in histogram.data_points() {
+        assert!(point.scale() > 0);
+        assert_eq!(
+            point.count(),
+            if point.attributes().count() == 0 {
+                1
+            } else {
+                2
+            }
+        );
+    }
+    assert_eq!(
+        histogram.data_points().map(|dp| dp.sum()).sum::<u64>(),
+        values.iter().map(|v| v.0).sum()
+    );
+    assert_eq!(
+        histogram.data_points().map(|dp| dp.count()).sum::<usize>(),
+        values.len()
+    );
+}
+
+#[test]
+fn test_make_u64_exponential_histogram_metric_handle() {
+    let values = vec![(2, vec![KeyValue::new("key", "value")]), (25, vec![])];
+    let metric = make_u64_exponential_histogram_metric_handle(
+        "my_exponential_histogram",
+        None,
+        None,
+        values.clone(),
+    );
+
+    assert_eq!(metric.name(), "my_exponential_histogram");
+    let histogram = metric.extract::<ExponentialHistogram<u64>>().unwrap();
     assert_eq!(histogram.data_points().count(), values.len());
     assert_eq!(
         histogram.data_points().map(|dp| dp.sum()).sum::<u64>(),
