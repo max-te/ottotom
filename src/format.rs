@@ -1,7 +1,9 @@
 use ufmt::uDisplay;
 
-pub trait FastDisplay {
+pub trait Numeric {
     fn fast_display(&self) -> impl uDisplay + Copy + use<Self>;
+    fn is_unsigned() -> bool;
+    fn is_nonnegative(&self) -> bool;
 }
 
 #[derive(Copy, Clone)]
@@ -26,10 +28,20 @@ impl uDisplay for RyuDisplay {
 }
 
 // om[impl numbers.float]
-impl FastDisplay for f64 {
+impl Numeric for f64 {
     #[inline]
     fn fast_display(&self) -> impl uDisplay + Copy + use<> {
         RyuDisplay(*self)
+    }
+
+    #[inline]
+    fn is_unsigned() -> bool {
+        false
+    }
+
+    #[inline]
+    fn is_nonnegative(&self) -> bool {
+        self.is_sign_positive()
     }
 }
 
@@ -37,7 +49,7 @@ impl FastDisplay for f64 {
 mod test_float_format {
     use ufmt::uwrite;
 
-    use crate::format::FastDisplay;
+    use crate::format::Numeric;
 
     #[test]
     fn has_decimal_point() {
@@ -83,7 +95,7 @@ mod test_float_format {
 mod fast_impl_with {
     use ufmt::uDisplay;
 
-    use super::FastDisplay;
+    use super::Numeric;
     #[derive(Copy, Clone)]
     struct ItoaDisplay<N: itoa::Integer>(N);
 
@@ -98,36 +110,76 @@ mod fast_impl_with {
         }
     }
 
-    impl FastDisplay for u64 {
+    impl Numeric for u64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
             ItoaDisplay(*self)
         }
+
+        #[inline]
+        fn is_unsigned() -> bool {
+            true
+        }
+
+        #[inline]
+        fn is_nonnegative(&self) -> bool {
+            true
+        }
     }
 
-    impl FastDisplay for i64 {
+    impl Numeric for i64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
             ItoaDisplay(*self)
+        }
+
+        #[inline]
+        fn is_unsigned() -> bool {
+            false
+        }
+
+        #[inline]
+        fn is_nonnegative(&self) -> bool {
+            !self.is_negative()
         }
     }
 }
 #[cfg(not(feature = "fast"))]
 mod fast_impl_without {
-    use super::FastDisplay;
+    use super::Numeric;
     use ufmt::uDisplay;
 
-    impl FastDisplay for u64 {
+    impl Numeric for u64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
             *self
         }
+
+        #[inline]
+        fn is_unsigned() -> bool {
+            true
+        }
+
+        #[inline]
+        fn is_nonnegative(&self) -> bool {
+            true
+        }
     }
 
-    impl FastDisplay for i64 {
+    impl Numeric for i64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
             *self
+        }
+
+        #[inline]
+        fn is_unsigned() -> bool {
+            false
+        }
+
+        #[inline]
+        fn is_nonnegative(&self) -> bool {
+            !self.is_negative()
         }
     }
 }

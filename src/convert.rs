@@ -3,7 +3,7 @@ use std::fmt::Write;
 use std::hash::{DefaultHasher, Hasher};
 use std::time::SystemTime;
 
-use crate::format::FastDisplay;
+use crate::format::Numeric;
 use opentelemetry::{Key, KeyValue, Value};
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
@@ -288,7 +288,7 @@ fn write_values<U: uWrite>(
     }
 }
 
-fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
+fn write_histogram<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     histogram: &Histogram<T>,
 ) -> Result<(), U::Error> {
@@ -333,14 +333,18 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
             point.count().fast_display(),
             ts
         )?;
-        uwriteln!(
-            ctx.f,
-            "{}_sum{{{}}} {} {}",
-            ctx.name,
-            attrs,
-            point.sum().fast_display(),
-            ts,
-        )?;
+        if T::is_unsigned() || point.min().as_ref().is_some_and(T::is_nonnegative) {
+            // c[impl histogram.sum] - {name}_sum only if the sum is positive and monotonic
+            // TODO: monitor if opentelmetry-sdk introduces positive f64 histograms?
+            uwriteln!(
+                ctx.f,
+                "{}_sum{{{}}} {} {}",
+                ctx.name,
+                attrs,
+                point.sum().fast_display(),
+                ts,
+            )?;
+        }
 
         #[cfg(feature = "experimental-histogram-min-max")]
         {
@@ -408,7 +412,7 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
     Ok(())
 }
 
-fn write_counter<T: FastDisplay + Copy, U: uWrite>(
+fn write_counter<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     sum: &Sum<T>,
 ) -> Result<(), U::Error> {
@@ -456,7 +460,7 @@ fn write_counter<T: FastDisplay + Copy, U: uWrite>(
     Ok(())
 }
 
-fn write_gauge<T: FastDisplay + Copy, U: uWrite>(
+fn write_gauge<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     gauge: &Gauge<T>,
 ) -> Result<(), U::Error> {
