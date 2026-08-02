@@ -130,7 +130,7 @@ fn write_target_info<U: uWrite>(
     f.write_str("# TYPE target info\n")?;
     // om[impl info.suffix]
     f.write_str("target_info{")?;
-    // c[impl resource.attrs-key-sanitize] - resource attrs go through the same sanitization
+    // c[impl resource.attrs-sanitize] - resource attrs go through the same sanitization
     write_attrs_tuple(f, resource.iter())?;
     // om[impl info.value]
     f.write_str("} 1\n")?;
@@ -527,6 +527,7 @@ fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
         write_sanitized_name(f, attr.0.as_str(), NameKind::AttributeLabel)?;
         f.write_str("=\"")?;
         // c[impl mattrs.type-conversion] - non-string values are stringified
+        // c[impl attrs.stringify] - go through opentelemetry-sdk's `as_str`, TODO: implement our own to avoid allocating
         write_escaped(f, &attr.1.as_str())?;
         f.write_char('"')?;
         first = false;
@@ -540,6 +541,7 @@ fn hash_attrs<'a, I: Iterator<Item = &'a KeyValue>>(attrs: I) -> u64 {
     for kv in attrs {
         let mut hasher = DefaultHasher::default();
         hasher.write(kv.key.as_str().as_bytes());
+        // TODO: replace `as_str` to avoid allocations
         hasher.write(kv.value.as_str().as_bytes());
         hash ^= hasher.finish(); // XOR to be order-invariant
     }

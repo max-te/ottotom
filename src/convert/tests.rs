@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use insta::assert_snapshot;
-use opentelemetry::KeyValue;
+use opentelemetry::{Array, KeyValue, Value};
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
     make_f64_counter_metric, make_f64_exponential_histogram_metric_handle, make_f64_gauge_metric,
@@ -202,6 +202,104 @@ fn test_write_attrs() {
         output,
         "key1=\"value\\nwith\\nnewlines\",key2=\"value\\\"with\\\"quotes\""
     );
+}
+
+#[test]
+// c[verify attrs.stringify]
+fn test_write_attrs_stringify() {
+    let mut output = String::new();
+
+    // int64(100) -> "100"
+    write_attrs(&mut output, [KeyValue::new("int", Value::I64(100))].iter()).unwrap();
+    assert_eq!(output, "int=\"100\"");
+
+    // float64(1.5) -> "1.5"
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new("float", Value::F64(1.5))].iter(),
+    )
+    .unwrap();
+    assert_eq!(output, "float=\"1.5\"");
+
+    // bool -> "true"/"false"
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new("bool", Value::Bool(true))].iter(),
+    )
+    .unwrap();
+    assert_eq!(output, "bool=\"true\"");
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new("bool", Value::Bool(false))].iter(),
+    )
+    .unwrap();
+    assert_eq!(output, "bool=\"false\"");
+
+    // strings pass through unchanged
+    output.clear();
+    write_attrs(&mut output, [KeyValue::new("str", "he\u{0000}llo")].iter()).unwrap();
+    assert_eq!(output, "str=\"he\u{0000}llo\"");
+
+    // empty array of any type -> "[]"
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new("arr", Value::Array(Array::I64(vec![])))].iter(),
+    )
+    .unwrap();
+    assert_eq!(output, "arr=\"[]\"");
+
+    // non-empty arrays are JSON-encoded
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new(
+            "arr",
+            Value::Array(Array::I64(vec![1, 2, 3])),
+        )]
+        .iter(),
+    )
+    .unwrap();
+    assert_eq!(output, "arr=\"[1,2,3]\"");
+
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new(
+            "arr",
+            Value::Array(Array::F64(vec![1.5, 2.5])),
+        )]
+        .iter(),
+    )
+    .unwrap();
+    assert_eq!(output, "arr=\"[1.5,2.5]\"");
+
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new(
+            "arr",
+            Value::Array(Array::Bool(vec![true, false])),
+        )]
+        .iter(),
+    )
+    .unwrap();
+    assert_eq!(output, "arr=\"[true,false]\"");
+
+    output.clear();
+    write_attrs(
+        &mut output,
+        [KeyValue::new(
+            "arr",
+            Value::Array(Array::String(vec!["a".into(), "b".into()])),
+        )]
+        .iter(),
+    )
+    .unwrap();
+    assert_eq!(output, r#"arr="[\"a\",\"b\"]""#);
 }
 
 #[test]

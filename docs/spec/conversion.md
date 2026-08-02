@@ -265,7 +265,7 @@ info metric MUST be an info-typed
 metric whose labels MUST include the resource attributes, and MUST NOT include
 any other labels.
 
-c[resource.attrs-key-sanitize]
+c[resource.attrs-sanitize]
 To convert OTLP resource attributes to Prometheus labels, string Attribute values are converted directly to labels, and non-string Attribute values MUST be converted to string attributes following the attribute specification.
 
 # Attributes
