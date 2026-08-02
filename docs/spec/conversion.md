@@ -147,8 +147,8 @@ OpenTelemetry Histograms with Delta aggregation temporality SHOULD be aggregated
 ## Exponential Histograms
 
 > c[exphist.unimplemented]
-> Exponential histograms MUST be dropped as input
-> until they are implemented.
+> Exponential histograms MUST be dropped as input,
+> as OpenMetrics 1.0 does not support native histograms.
 
 An OpenTelemetry Exponential Histogram with
 a cumulative aggregation temporality MUST be converted to a Prometheus Native
