@@ -709,7 +709,7 @@ mod write_values {
     }
 
     #[test]
-    // c[verify gauge-default]
+    // om[verify numbers.integer]
     fn test_i64_gauge() {
         let metric = make_i64_gauge_metric(vec![(-5, vec![KeyValue::new("k", "v")])]);
         let data = AggregatedMetrics::I64(MetricData::Gauge(metric));

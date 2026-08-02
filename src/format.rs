@@ -110,6 +110,7 @@ mod fast_impl_with {
         }
     }
 
+    // om[impl numbers.integer]
     impl Numeric for u64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
@@ -127,6 +128,7 @@ mod fast_impl_with {
         }
     }
 
+    // om[impl numbers.integer]
     impl Numeric for i64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
@@ -149,6 +151,7 @@ mod fast_impl_without {
     use super::Numeric;
     use ufmt::uDisplay;
 
+    // om[impl numbers.integer]
     impl Numeric for u64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
@@ -166,6 +169,7 @@ mod fast_impl_without {
         }
     }
 
+    // om[impl numbers.integer]
     impl Numeric for i64 {
         #[inline]
         fn fast_display(&self) -> impl uDisplay + Copy + use<> {
