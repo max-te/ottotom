@@ -76,7 +76,7 @@ Prometheus exporters SHOULD provide a configuration option to disable the
 
 ## Gauges
 
-c[gauge-default]
+(Requires metric metadata)
 An OpenTelemetry Gauge MUST be converted to a Prometheus Unknown-typed metric if the `prometheus.type` key of metric metadata is `unknown`. Otherwise, it MUST be converted to a Prometheus Gauge.
 
 ## Sums
@@ -84,10 +84,10 @@ An OpenTelemetry Gauge MUST be converted to a Prometheus Unknown-typed metric if
 c[sum.cumulative-monotonic]
 A cumulative, monotonic Sum MUST be converted to a Prometheus Counter.
 
-c[sum.cumulative-nonmonotonic.info]
+(Requires metric metadata)
 A cumulative, non-monotonic Sum with `prometheus.type=info` MUST be converted to an OpenMetrics Info metric.
 
-c[sum.cumulative-nonmonotonic.stateset]
+(Requires metric metadata)
 A cumulative, non-monotonic Sum with `prometheus.type=stateset` MUST be converted to an OpenMetrics StateSet metric.
 
 c[sum.cumulative-nonmonotonic.default]
