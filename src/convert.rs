@@ -265,6 +265,8 @@ fn write_otel_scope_info<U: uWrite>(
 }
 
 /// Write all data points for this metric
+// c[impl resource.attrs] - resource attributes are dropped: labels on metric
+// families carry only point and scope attributes, never resource attributes
 fn write_values<U: uWrite>(
     ctx: &mut Context<'_, U>,
     metric: &AggregatedMetrics,
