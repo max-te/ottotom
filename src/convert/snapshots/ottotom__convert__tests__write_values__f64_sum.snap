@@ -2,4 +2,5 @@
 source: src/convert/tests.rs
 expression: strip_otel_scope_name(&output)
 ---
+my_f64_sum_created{k="v"} <TIMESTAMP> <TIMESTAMP>
 my_f64_sum_total{k="v"} 1.5 <TIMESTAMP>

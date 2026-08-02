@@ -8,29 +8,30 @@ target_info{service_name="ottotom-testsupport",telemetry_sdk_language="rust",tel
 otel_scope_info{otel_scope_name="meter.1",otel_scope_version="0.0.1",scopek="scopev"} 1
 # TYPE f64_gauge gauge
 # HELP f64_gauge A \"gauge\"\nFor testing
-f64_gauge{kk="v1",otel_scope_name="meter.1",otel_scope_version="0.0.1"} 4.22 <TIMESTAMP_1>
-f64_gauge{kk="v2",otel_scope_name="meter.1",otel_scope_version="0.0.1"} 4.23 <TIMESTAMP_1>
+f64_gauge{kk="v1",otel_scope_name="meter.1",otel_scope_version="0.0.1"} 4.22 <TIMESTAMP_3>
+f64_gauge{kk="v2",otel_scope_name="meter.1",otel_scope_version="0.0.1"} 4.23 <TIMESTAMP_3>
 # TYPE histo histogram
-histo_created{otel_scope_name="meter.1",otel_scope_version="0.0.1"} <TIMESTAMP_0> <TIMESTAMP_3>
-histo_count{otel_scope_name="meter.1",otel_scope_version="0.0.1"} 4 <TIMESTAMP_3>
-histo_sum{otel_scope_name="meter.1",otel_scope_version="0.0.1"} 15.7 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="0.0"} 1 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="5.0"} 3 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="10.0"} 3 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="25.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="50.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="75.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="100.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="250.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="500.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="750.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="1000.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="2500.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="5000.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="7500.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="10000.0"} 4 <TIMESTAMP_3>
-histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="+Inf"} 4 <TIMESTAMP_3>
+histo_created{otel_scope_name="meter.1",otel_scope_version="0.0.1"} <TIMESTAMP_2> <TIMESTAMP_5>
+histo_count{otel_scope_name="meter.1",otel_scope_version="0.0.1"} 4 <TIMESTAMP_5>
+histo_sum{otel_scope_name="meter.1",otel_scope_version="0.0.1"} 15.7 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="0.0"} 1 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="5.0"} 3 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="10.0"} 3 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="25.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="50.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="75.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="100.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="250.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="500.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="750.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="1000.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="2500.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="5000.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="7500.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="10000.0"} 4 <TIMESTAMP_5>
+histo_bucket{otel_scope_name="meter.1",otel_scope_version="0.0.1",le="+Inf"} 4 <TIMESTAMP_5>
 # TYPE u64_counter_seconds counter
 # UNIT u64_counter_seconds seconds
-u64_counter_seconds_total{otel_scope_name="meter.1",otel_scope_version="0.0.1"} 125 <TIMESTAMP_2>
+u64_counter_seconds_created{otel_scope_name="meter.1",otel_scope_version="0.0.1"} <TIMESTAMP_1> <TIMESTAMP_4>
+u64_counter_seconds_total{otel_scope_name="meter.1",otel_scope_version="0.0.1"} 125 <TIMESTAMP_4>
 # EOF

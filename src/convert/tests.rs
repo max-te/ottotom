@@ -414,6 +414,7 @@ fn test_write_gauge() {
 #[test]
 // c[verify sum.cumulative-monotonic]
 // c[verify sum.total-suffix]
+// c[verify sum.created]
 fn test_write_counter() {
     let values = vec![(125, vec![KeyValue::new("kk", "v1")])];
 
@@ -429,6 +430,12 @@ fn test_write_counter() {
             .unwrap()
             .as_secs_f64()
             .to_string();
+        let created = sum
+            .start_time()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64()
+            .to_string();
 
         let mut output = String::new();
         let mut ctx = Context {
@@ -439,7 +446,9 @@ fn test_write_counter() {
         assert!(extract_type_unit_and_name(&mut ctx, &handle));
         write_counter(&mut ctx, &sum).unwrap();
 
-        output.replace(&ts, "<TIMESTAMP>")
+        output
+            .replace(&ts, "<TIMESTAMP>")
+            .replace(&created, "<CREATED>")
     };
 
     let output = render("mycounter");

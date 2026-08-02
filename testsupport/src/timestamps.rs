@@ -12,9 +12,11 @@ impl<T> ExtractTimestamps for MetricData<T> {
         match self {
             MetricData::Gauge(gauge) => {
                 timestamps.push(gauge.time());
+                gauge.start_time().inspect(|&time| timestamps.push(time));
             }
             MetricData::Sum(sum) => {
                 timestamps.push(sum.time());
+                timestamps.push(sum.start_time());
             }
             MetricData::Histogram(histogram) => {
                 timestamps.push(histogram.time());

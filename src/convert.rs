@@ -150,9 +150,9 @@ fn extract_type_unit_and_name(
     ctx.name.clear();
     let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name(), NameKind::Metric);
     // The family name must not end in `_total`: `write_counter` builds the
-    // samples by appending `_total` to it. A metric name that already ends in
-    // `_total` is stripped here and re-appended by `write_counter`, so the
-    // emitted sample name is unchanged.
+    // samples by appending `_total`/`_created` to it. A metric name that already
+    // ends in `_total` is stripped here and re-appended by `write_counter`, so
+    // the emitted sample name is unchanged.
     // om[related counter.suffix]
     // c[related sum.total-suffix]
     if ctx.typ == "counter" && ctx.name.ends_with("_total") {
@@ -436,11 +436,22 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
 
     let ts = to_timestamp(sum.time());
+    let created = to_timestamp(sum.start_time());
 
     if sum.is_monotonic() {
         for point in points {
             attrs.clear();
             let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
+            // c[impl sum.created]
+            // om[impl counter.suffix]
+            uwriteln!(
+                ctx.f,
+                "{}_created{{{}}} {} {}",
+                ctx.name,
+                attrs,
+                created,
+                ts
+            )?;
             // c[impl sum.total-suffix] - the family name is bare (see
             // `extract_type_unit_and_name`), so the `_total` suffix is always
             // appended to the value sample.
