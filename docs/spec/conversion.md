@@ -221,11 +221,10 @@ the attribute specification.
 
 c[mattrs.key-sanitize]
 Prometheus
-metric label keys are required to match the following regex:
-`[a-zA-Z_]([a-zA-Z0-9_])*`.  Metrics from OpenTelemetry with unsupported
-Attribute names MUST replace invalid characters with the `_` character.
-Multiple consecutive `_` characters MUST be replaced with a single `_`
-character.
+naming conventions encourage metric names to match the following regular
+expression: `[a-zA-Z_]([a-zA-Z0-9_])*`.  Discouraged characters SHOULD be
+replaced with the `_` character.  Multiple consecutive `_` characters SHOULD
+be replaced with a single `_` character.
 
 c[mattrs.key-sanitize.collisions]
 If multiple key-value pairs are converted to have the same Prometheus

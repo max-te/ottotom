@@ -589,6 +589,10 @@ enum NameKind {
 /// [spec](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#metric-metadata-1).
 // c[impl metadata.name-sanitize]
 // c[impl mattrs.key-sanitize]
+// om[related labels.reserved] - a leading illegal character is sanitized to
+// a `_` prefix (e.g. `1.label` -> `_1_label`), producing an underscore-leading
+// label name that technically violates om[labels.reserved]; accepted deviation,
+// matching the opentelemetry-prometheus reference impl.
 fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str, kind: NameKind) -> Result<(), U::Error> {
     // Multiple consecutive `_` characters MUST be replaced with a single `_` character
     let mut previous_was_underscore = false;
