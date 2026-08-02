@@ -39,47 +39,92 @@ fn strip_otel_scope_name(s: &str) -> String {
 
 #[test]
 // c[verify metadata.name-sanitize]
-fn test_write_sanitized_name() {
+fn test_write_sanitized_metric_name() {
     let mut output = String::new();
 
     // Test with valid name
-    write_sanitized_name(&mut output, "valid_metric_name").unwrap();
+    write_sanitized_name(&mut output, "valid_metric_name", NameKind::Metric).unwrap();
     assert_eq!(output, "valid_metric_name");
 
     // Test with name containing invalid characters
     output.clear();
-    write_sanitized_name(&mut output, "invalid._ä.metric-name").unwrap();
+    write_sanitized_name(&mut output, "invalid._ä.metric-name", NameKind::Metric).unwrap();
     assert_eq!(output, "invalid_metric_name");
 
     // Test with name starting with digit
     output.clear();
-    write_sanitized_name(&mut output, "1.metric").unwrap();
+    write_sanitized_name(&mut output, "1.metric", NameKind::Metric).unwrap();
     assert_eq!(output, "_1_metric");
 
     // Multiple consecutive invalid chars should collapse to single underscore
     output.clear();
-    write_sanitized_name(&mut output, "a..b").unwrap();
+    write_sanitized_name(&mut output, "a..b", NameKind::Metric).unwrap();
     assert_eq!(output, "a_b");
 
     // Mixed invalid chars should collapse
     output.clear();
-    write_sanitized_name(&mut output, "a..-..b").unwrap();
+    write_sanitized_name(&mut output, "a..-..b", NameKind::Metric).unwrap();
     assert_eq!(output, "a_b");
 
     // Leading invalid char becomes underscore
     output.clear();
-    write_sanitized_name(&mut output, ".abc").unwrap();
+    write_sanitized_name(&mut output, ".abc", NameKind::Metric).unwrap();
     assert_eq!(output, "_abc");
 
     // Colons are allowed
     output.clear();
-    write_sanitized_name(&mut output, "my:metric:name").unwrap();
+    write_sanitized_name(&mut output, "my:metric:name", NameKind::Metric).unwrap();
     assert_eq!(output, "my:metric:name");
 
     // Colons mixed with invalid chars
     output.clear();
-    write_sanitized_name(&mut output, "my:metric.name").unwrap();
+    write_sanitized_name(&mut output, "my:metric.name", NameKind::Metric).unwrap();
     assert_eq!(output, "my:metric_name");
+}
+
+#[test]
+// c[verify mattrs.key-sanitize]
+fn test_write_sanitized_attribute_label_name() {
+    let mut output = String::new();
+
+    // Test with valid label name
+    write_sanitized_name(&mut output, "valid_label_name", NameKind::AttributeLabel).unwrap();
+    assert_eq!(output, "valid_label_name");
+
+    // Test with label name containing invalid characters
+    output.clear();
+    write_sanitized_name(
+        &mut output,
+        "invalid._ä.label-name",
+        NameKind::AttributeLabel,
+    )
+    .unwrap();
+    assert_eq!(output, "invalid_label_name");
+
+    // Test with label name starting with digit
+    output.clear();
+    write_sanitized_name(&mut output, "1.label", NameKind::AttributeLabel).unwrap();
+    assert_eq!(output, "_1_label");
+
+    // Multiple consecutive invalid chars should collapse to single underscore
+    output.clear();
+    write_sanitized_name(&mut output, "a..b", NameKind::AttributeLabel).unwrap();
+    assert_eq!(output, "a_b");
+
+    // Mixed invalid chars should collapse
+    output.clear();
+    write_sanitized_name(&mut output, "a..-..b", NameKind::AttributeLabel).unwrap();
+    assert_eq!(output, "a_b");
+
+    // Leading invalid char becomes underscore
+    output.clear();
+    write_sanitized_name(&mut output, ".abc", NameKind::AttributeLabel).unwrap();
+    assert_eq!(output, "_abc");
+
+    // Colons are NOT allowed in labels (unlike metric names)
+    output.clear();
+    write_sanitized_name(&mut output, "my:label:name", NameKind::AttributeLabel).unwrap();
+    assert_eq!(output, "my_label_name");
 }
 
 #[test]

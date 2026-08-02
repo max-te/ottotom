@@ -148,7 +148,7 @@ fn extract_type_unit_and_name(
     ctx.unit = get_unit_suffixes(metric.unit());
 
     ctx.name.clear();
-    let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name());
+    let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name(), NameKind::Metric);
     // om[impl metadata.unit-suffix]
     // c[impl metadata.unit-suffix]
     if let Some(ref unit) = ctx.unit
@@ -524,7 +524,7 @@ fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
         if !first {
             f.write_char(',')?;
         }
-        write_sanitized_name(f, attr.0.as_str())?;
+        write_sanitized_name(f, attr.0.as_str(), NameKind::AttributeLabel)?;
         f.write_str("=\"")?;
         // c[impl mattrs.type-conversion] - non-string values are stringified
         write_escaped(f, &attr.1.as_str())?;
@@ -577,10 +577,17 @@ fn write_escaped<U: uWrite>(f: &mut U, value: &str) -> Result<(), U::Error> {
     f.write_str(str::from_utf8(bytes).expect("escaped string should be valid utf-8"))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum NameKind {
+    Metric,
+    AttributeLabel,
+}
+
 /// Write `name` as an OpenMetrics metrics name, replacing any illegal characters with underscore according to the
 /// [spec](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#metric-metadata-1).
 // c[impl metadata.name-sanitize]
-fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str) -> Result<(), U::Error> {
+// c[impl mattrs.key-sanitize]
+fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str, kind: NameKind) -> Result<(), U::Error> {
     // Multiple consecutive `_` characters MUST be replaced with a single `_` character
     let mut previous_was_underscore = false;
     // The name must not start with a digit
@@ -589,9 +596,9 @@ fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str) -> Result<(), U::Error
         previous_was_underscore = true;
     }
     for c in name.chars() {
-        // Allowed characters are `a-z A-Z 0-9 : _`
+        // Allowed characters are `a-z A-Z 0-9 : _`, except for ':' in labels
         // Invalid characters in the metric name MUST be replaced with the `_` character.
-        if c.is_ascii_alphanumeric() || c == ':' {
+        if c.is_ascii_alphanumeric() || (c == ':' && kind == NameKind::Metric) {
             f.write_char(c)?;
             previous_was_underscore = false;
         } else {
