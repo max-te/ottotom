@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use insta::assert_snapshot;
 use opentelemetry::{Array, KeyValue, Value};
@@ -460,6 +460,125 @@ fn test_write_counter() {
     assert_eq!(
         strip_otel_scope_name(&output),
         strip_otel_scope_name(&render("mycounter_total"))
+    );
+}
+
+fn exemplar_from_parts<T>(
+    value: T,
+    time: SystemTime,
+    filtered_attributes: Vec<KeyValue>,
+    span_id: [u8; 8],
+    trace_id: [u8; 16],
+) -> Exemplar<T> {
+    /// Mirror of [`Exemplar`]'s fields for constructing exemplars in tests.
+    ///
+    /// The fields are never read: the struct only exists to lay the bytes out
+    /// identically to `Exemplar` before they are reinterpreted.
+    #[expect(dead_code)]
+    struct RawExemplar<T> {
+        filtered_attributes: Vec<KeyValue>,
+        time: SystemTime,
+        value: T,
+        span_id: [u8; 8],
+        trace_id: [u8; 16],
+    }
+
+    // `exemplar_from_parts` reinterprets `RawExemplar`'s bytes as an `Exemplar`, so
+    // the layouts must match. `Exemplar`'s fields are `pub(crate)`, so size and
+    // alignment are the strongest cross-crate checks available; these fail to
+    // compile if the SDK's `Exemplar` changes size or alignment.
+    const _: () =
+        assert!(std::mem::size_of::<RawExemplar<f64>>() == std::mem::size_of::<Exemplar<f64>>());
+    const _: () =
+        assert!(std::mem::align_of::<RawExemplar<f64>>() == std::mem::align_of::<Exemplar<f64>>());
+    const _: () =
+        assert!(std::mem::size_of::<RawExemplar<u64>>() == std::mem::size_of::<Exemplar<u64>>());
+    const _: () =
+        assert!(std::mem::align_of::<RawExemplar<u64>>() == std::mem::align_of::<Exemplar<u64>>());
+    const _: () =
+        assert!(std::mem::size_of::<RawExemplar<i64>>() == std::mem::size_of::<Exemplar<i64>>());
+    const _: () =
+        assert!(std::mem::align_of::<RawExemplar<i64>>() == std::mem::align_of::<Exemplar<i64>>());
+
+    // SAFETY: `RawExemplar` mirrors `Exemplar`'s fields, types, and order (see
+    // `opentelemetry_sdk::metrics::data::Exemplar`), so the layouts are
+    // identical and reading the mirror's bytes as an `Exemplar` is sound.
+    // `mem::forget` keeps the mirror from dropping the `Vec` now owned by the
+    // returned `Exemplar`.
+    //
+    // `Exemplar` has no public constructor, so this builds a mirror struct with
+    // the same fields, types, and order as `Exemplar<T>` and reinterprets its
+    // bytes. The compile-time size/alignment assertions above and the
+    // `test_exemplar_roundtrip` test below verify the layouts stay in sync.
+    unsafe {
+        let raw = RawExemplar {
+            filtered_attributes,
+            time,
+            value,
+            span_id,
+            trace_id,
+        };
+        let exemplar = std::ptr::read(&raw as *const RawExemplar<T> as *const Exemplar<T>);
+        std::mem::forget(raw);
+        exemplar
+    }
+}
+
+#[test]
+// om[verify exemplars.structure]
+// om[verify exemplars.empty-labelset]
+// c[verify exemplar.trace-span-ids]
+// c[verify exemplar.filtered-attrs]
+// c[verify exemplar.timestamp]
+fn test_write_exemplar() {
+    let exemplar = exemplar_from_parts(
+        0.67,
+        UNIX_EPOCH + Duration::from_millis(123_456),
+        vec![KeyValue::new("filtered", "yes")],
+        [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe],
+        [
+            0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab,
+            0xcd, 0xef,
+        ],
+    );
+    let mut output = String::new();
+    write_exemplar(&mut output, std::iter::once(&exemplar)).unwrap();
+    assert_eq!(
+        output,
+        " # {filtered=\"yes\",span_id=\"deadbeefcafebabe\",trace_id=\"1234567890abcdef1234567890abcdef\"} 0.67 123.456"
+    );
+
+    // Zeroed ids and no filtered attributes render as an empty label set.
+    let bare = exemplar_from_parts::<f64>(1.0, UNIX_EPOCH, vec![], [0; 8], [0; 16]);
+    let mut output = String::new();
+    write_exemplar(&mut output, std::iter::once(&bare)).unwrap();
+    assert_eq!(output, " # {} 1.0 0.0");
+}
+
+#[test]
+// Verifies every field survives the byte reinterpretation in
+// `exemplar_from_parts` unchanged, catching field reordering or resizing in
+// `opentelemetry_sdk`'s `Exemplar` that the size/alignment assertions above
+// cannot.
+fn test_exemplar_roundtrip() {
+    let filtered = vec![KeyValue::new("filtered", "yes")];
+    // Obvious test data: span_id `0xdeadbeefcafebabe`, trace_id
+    // `0x1234567890abcdef1234567890abcdef`.
+    let span_id = [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe];
+    let trace_id = [
+        0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd,
+        0xef,
+    ];
+    let time = UNIX_EPOCH + Duration::from_millis(123_456);
+    let exemplar = exemplar_from_parts(0.67, time, filtered.clone(), span_id, trace_id);
+
+    assert_eq!(exemplar.value, 0.67);
+    assert_eq!(exemplar.time(), time);
+    assert_eq!(*exemplar.trace_id(), trace_id);
+    assert_eq!(*exemplar.span_id(), span_id);
+    assert_eq!(
+        exemplar.filtered_attributes().collect::<Vec<_>>(),
+        filtered.iter().collect::<Vec<_>>()
     );
 }
 

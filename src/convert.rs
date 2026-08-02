@@ -4,13 +4,13 @@ use std::hash::{DefaultHasher, Hasher};
 use std::time::SystemTime;
 
 use crate::format::Numeric;
-use opentelemetry::{Key, KeyValue, Value};
+use opentelemetry::{Key, KeyValue, SpanId, TraceId, Value};
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
-    AggregatedMetrics, Gauge, Histogram, MetricData, ResourceMetrics, Sum,
+    AggregatedMetrics, Exemplar, Gauge, Histogram, MetricData, ResourceMetrics, Sum,
 };
 use opentelemetry_sdk::metrics::data::{Metric, ScopeMetrics};
-use ufmt::{uDisplay, uWrite, uwriteln};
+use ufmt::{uDisplay, uWrite, uwrite, uwriteln};
 use unit::get_unit_suffixes;
 
 #[cfg(test)]
@@ -384,30 +384,42 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
         }
         let mut cumulative_count = 0;
         // c[impl histogram.bucket]
-        for (bound, count) in std::iter::zip(point.bounds(), point.bucket_counts()) {
+        let bounds: Vec<_> = point.bounds().collect();
+        for (i, (bound, count)) in std::iter::zip(&bounds, point.bucket_counts()).enumerate() {
             // c[impl histogram.bucket.cumulative]
             cumulative_count += count;
             // c[impl histogram.bucket.le]
-            uwriteln!(
+            uwrite!(
                 // Not using write! here is a ~19% speedup
                 ctx.f,
-                "{}_bucket{{{}le=\"{}\"}} {} {}"
+                "{}_bucket{{{}le=\"{}\"}} {} {}",
                 ctx.name,
                 attrs,
                 bound.fast_display(),
                 cumulative_count.fast_display(),
                 ts,
             )?;
-            // writeln!(
-            //     f,
-            //     "{name}_bucket{{{attrs}le=\"{bound}\"}} {count} {ts}",
-            //     bound = bound.fast_display(),
-            //     count = cumulative_count.fast_display(),
-            // )?;
+            // om[impl exemplars.bucket-attachment] - attach the latest exemplar
+            // whose value falls within this bucket; a bucket holds at most one.
+            // c[impl exemplar.bucket-single]
+            // c[impl histogram.bucket.exemplar] - a single exemplar per `le`
+            // bucket, attached to no other `le`-labelled point
+            let lower = if i > 0 {
+                bounds[i - 1]
+            } else {
+                f64::NEG_INFINITY
+            };
+            write_exemplar(
+                &mut ctx.f,
+                point
+                    .exemplars()
+                    .filter(|e| e.value.to_f64() > lower && e.value.to_f64() <= *bound),
+            )?;
+            ctx.f.write_char('\n')?;
         }
         // om[impl histogram.inf-bucket]
         // c[impl histogram.bucket.inf]
-        uwriteln!(
+        uwrite!(
             ctx.f,
             "{}_bucket{{{}le=\"+Inf\"}} {} {}",
             ctx.name,
@@ -415,6 +427,14 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             point.count().fast_display(),
             ts,
         )?;
+        // Exemplars above the last finite bound belong to the +Inf bucket.
+        if let Some(&last) = bounds.last() {
+            write_exemplar(
+                &mut ctx.f,
+                point.exemplars().filter(|e| e.value.to_f64() > last),
+            )?;
+        }
+        ctx.f.write_char('\n')?;
     }
     Ok(())
 }
@@ -455,7 +475,7 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
             // c[impl sum.total-suffix] - the family name is bare (see
             // `extract_type_unit_and_name`), so the `_total` suffix is always
             // appended to the value sample.
-            uwriteln!(
+            uwrite!(
                 ctx.f,
                 "{}_total{{{}}} {} {}",
                 ctx.name,
@@ -463,12 +483,17 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
                 point.value().fast_display(),
                 ts,
             )?;
+            // c[impl exemplar.types] - exemplars on monotonic sums are converted
+            write_exemplar(&mut ctx.f, point.exemplars())?;
+            ctx.f.write_char('\n')?;
         }
     } else {
         for point in points {
             attrs.clear();
             let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
-            uwriteln!(
+            // c[impl exemplar.types] - exemplars on non-monotonic sums (gauges)
+            // are dropped
+            uwrite!(
                 ctx.f,
                 "{}{{{}}} {} {}",
                 ctx.name,
@@ -476,6 +501,7 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
                 point.value().fast_display(),
                 ts,
             )?;
+            ctx.f.write_char('\n')?;
         }
     }
     Ok(())
@@ -494,7 +520,8 @@ fn write_gauge<T: Numeric + Copy, U: uWrite>(
     for point in points {
         attrs.clear();
         let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
-        uwriteln!(
+        // c[impl exemplar.types] - exemplars on gauges are dropped
+        uwrite!(
             ctx.f,
             "{}{{{}}} {} {}",
             ctx.name,
@@ -502,6 +529,7 @@ fn write_gauge<T: Numeric + Copy, U: uWrite>(
             point.value().fast_display(),
             ts,
         )?;
+        ctx.f.write_char('\n')?;
     }
     Ok(())
 }
@@ -644,4 +672,48 @@ fn to_timestamp(time: SystemTime) -> impl uDisplay {
         .expect("Time went backwards")
         .as_secs_f64();
     ts.fast_display()
+}
+
+fn write_exemplar<'a, T: Numeric + Copy + 'a, U: uWrite>(
+    f: &mut U,
+    exemplars: impl IntoIterator<Item = &'a Exemplar<T>>,
+) -> Result<(), U::Error> {
+    // Write at most one exemplar, preferring the most recent measurement.
+    let Some(exemplar) = exemplars.into_iter().max_by_key(|e| e.time()) else {
+        return Ok(());
+    };
+    // Build the exemplar's label set: the ids (only when a trace context was
+    // active; the SDK zeroes them otherwise) plus the filtered attributes.
+    // c[impl exemplar.trace-span-ids]
+    let mut labels = Vec::new();
+    let trace_id = *exemplar.trace_id();
+    if trace_id != [0; 16] {
+        labels.push(KeyValue::new(
+            "trace_id",
+            TraceId::from_bytes(trace_id).to_string(),
+        ));
+    }
+    let span_id = *exemplar.span_id();
+    if span_id != [0; 8] {
+        labels.push(KeyValue::new(
+            "span_id",
+            SpanId::from_bytes(span_id).to_string(),
+        ));
+    }
+    // c[impl exemplar.filtered-attrs] - filtered attributes become exemplar labels
+    labels.extend(exemplar.filtered_attributes().cloned());
+
+    // OpenMetrics exemplar: ` # {labels} value [timestamp]`
+    // om[impl exemplars.structure] - an exemplar is a label set + value (+ timestamp)
+    uwrite!(f, " # {{")?;
+    // om[impl exemplars.empty-labelset] - an empty label set is rendered as `{}`
+    write_attrs(f, labels.iter())?;
+    // c[impl exemplar.timestamp] - timestamps are added as timestamps
+    uwrite!(
+        f,
+        "}} {} {}",
+        exemplar.value.fast_display(),
+        to_timestamp(exemplar.time()),
+    )?;
+    Ok(())
 }

@@ -234,17 +234,35 @@ the lexicographical order of the original keys.
 
 ## Exemplars
 
+> Exemplar conversion is implemented, but `opentelemetry_sdk` (0.32.x, the
+> pinned version) never populates exemplars: its aggregators hardcode empty
+> exemplar vectors and there is no exemplar reservoir, so the code below is
+> currently unreachable. It becomes live when the SDK starts producing
+> exemplars (or is exercised via a test harness that injects them).
+
+c[exemplar.types]
 Exemplars on OpenTelemetry Histograms and Monotonic Sums SHOULD
 be converted to Prometheus exemplars. Exemplars on other OpenTelemetry data
-points MUST be dropped. For Prometheus Remote Write exporters, multiple exemplars are
+points MUST be dropped.
+
+c[exemplar.bucket-single]
+For Prometheus Remote Write exporters, multiple exemplars are
 able to be added to each bucket, so all exemplars SHOULD be converted. For
 Prometheus pull endpoints, only a single exemplar is able to be added to each
 bucket, so the largest exemplar from each bucket MUST be used, if attaching
 exemplars. If no exemplars exist on a bucket, the highest exemplar from a lower
 bucket MUST be used, even though it is a duplicate of another bucket's exemplar.
+
+c[exemplar.trace-span-ids]
 Prometheus Exemplars MUST use the `trace_id` and `span_id` keys for the trace
-and span IDs, respectively. Timestamps MUST be added as timestamps on the
-Prometheus exemplar, and `filtered_attributes` MUST be added as labels on the
+and span IDs, respectively.
+
+c[exemplar.timestamp]
+Timestamps MUST be added as timestamps on the
+Prometheus exemplar, and
+
+c[exemplar.filtered-attrs]
+`filtered_attributes` MUST be added as labels on the
 Prometheus exemplar unless they would exceed the
 [limit on characters](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#exemplars).
 

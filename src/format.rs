@@ -4,6 +4,9 @@ pub trait Numeric {
     fn fast_display(&self) -> impl uDisplay + Copy + use<Self>;
     fn is_unsigned() -> bool;
     fn is_nonnegative(&self) -> bool;
+    /// Converts the value to `f64`, for comparing metric values against
+    /// histogram bucket bounds (which the SDK always stores as `f64`).
+    fn to_f64(&self) -> f64;
 }
 
 #[derive(Copy, Clone)]
@@ -42,6 +45,11 @@ impl Numeric for f64 {
     #[inline]
     fn is_nonnegative(&self) -> bool {
         self.is_sign_positive()
+    }
+
+    #[inline]
+    fn to_f64(&self) -> f64 {
+        *self
     }
 }
 
@@ -126,6 +134,11 @@ mod fast_impl_with {
         fn is_nonnegative(&self) -> bool {
             true
         }
+
+        #[inline]
+        fn to_f64(&self) -> f64 {
+            *self as f64
+        }
     }
 
     // om[impl numbers.integer]
@@ -143,6 +156,11 @@ mod fast_impl_with {
         #[inline]
         fn is_nonnegative(&self) -> bool {
             !self.is_negative()
+        }
+
+        #[inline]
+        fn to_f64(&self) -> f64 {
+            *self as f64
         }
     }
 }
@@ -167,6 +185,11 @@ mod fast_impl_without {
         fn is_nonnegative(&self) -> bool {
             true
         }
+
+        #[inline]
+        fn to_f64(&self) -> f64 {
+            *self as f64
+        }
     }
 
     // om[impl numbers.integer]
@@ -184,6 +207,11 @@ mod fast_impl_without {
         #[inline]
         fn is_nonnegative(&self) -> bool {
             !self.is_negative()
+        }
+
+        #[inline]
+        fn to_f64(&self) -> f64 {
+            *self as f64
         }
     }
 }
