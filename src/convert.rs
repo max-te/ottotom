@@ -48,6 +48,8 @@ struct Context<'f, W: uWrite> {
     typ: &'static str,
     /// the name of the current scope
     scope_name: &'f str,
+    /// the version of the current scope
+    scope_version: Option<&'f str>,
 }
 
 impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
@@ -59,6 +61,7 @@ impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
             unit: None,
             typ: "",
             scope_name: "",
+            scope_version: None,
         }
     }
 }
@@ -94,6 +97,7 @@ impl WriteOpenMetrics for ResourceMetrics {
         for scope in scopes {
             if cfg!(feature = "otel_scope_info") {
                 ctx.scope_name = scope.scope().name();
+                ctx.scope_version = scope.scope().version();
             }
             let mut metrics: Vec<_> = scope.metrics().collect();
             metrics.sort_unstable_by_key(|met| met.name());
@@ -241,13 +245,7 @@ fn write_otel_scope_info<U: uWrite>(
 
     for scope in metrics {
         // c[impl scope.name-version]
-        let otel_attrs = &[
-            KeyValue::new("otel_scope_name", scope.scope().name().to_owned()),
-            KeyValue::new(
-                "otel_scope_version",
-                scope.scope().version().unwrap_or_default().to_owned(),
-            ),
-        ];
+        let otel_attrs = make_scope_name_attrs(scope.scope().name(), scope.scope().version());
         f.write_str("otel_scope_info{")?;
         // c[impl scope.attribute-labels]
         write_attrs(f, otel_attrs.iter().chain(scope.scope().attributes()))?;
@@ -294,7 +292,8 @@ fn write_histogram<T: FastDisplay + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     histogram: &Histogram<T>,
 ) -> Result<(), U::Error> {
-    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name);
+    // c[impl scope.labels-on-points]
+    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name, ctx.scope_version);
     let ts = to_timestamp(histogram.time());
     let created = to_timestamp(histogram.start_time());
     ctx.attr_buffer.clear();
@@ -414,7 +413,8 @@ fn write_counter<T: FastDisplay + Copy, U: uWrite>(
     sum: &Sum<T>,
 ) -> Result<(), U::Error> {
     let attrs = &mut ctx.attr_buffer;
-    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name);
+    // c[impl scope.labels-on-points]
+    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name, ctx.scope_version);
     assert_eq!(
         sum.temporality(),
         opentelemetry_sdk::metrics::Temporality::Cumulative,
@@ -461,7 +461,8 @@ fn write_gauge<T: FastDisplay + Copy, U: uWrite>(
     gauge: &Gauge<T>,
 ) -> Result<(), U::Error> {
     let attrs = &mut ctx.attr_buffer;
-    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name);
+    // c[impl scope.labels-on-points]
+    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name, ctx.scope_version);
     let ts = to_timestamp(gauge.time());
     let mut points: Vec<_> = gauge.data_points().collect();
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
@@ -481,12 +482,17 @@ fn write_gauge<T: FastDisplay + Copy, U: uWrite>(
 }
 
 /// Makes an `otel_scope_name` attribute with the specified `scope_name` if the `otel_scope_info` feature is active.
+// c[impl scope.labels-on-points]
 #[inline]
-fn make_scope_name_attrs(scope_name: &str) -> Option<KeyValue> {
+fn make_scope_name_attrs(scope_name: &str, scope_version: Option<&str>) -> Vec<KeyValue> {
+    // TODO: Get rid of the to_owned here, by not going through KeyValue
     if cfg!(feature = "otel_scope_info") {
         Some(KeyValue::new("otel_scope_name", scope_name.to_owned()))
+            .into_iter()
+            .chain(scope_version.map(|v| KeyValue::new("otel_scope_version", v.to_owned())))
+            .collect()
     } else {
-        None
+        Vec::new()
     }
 }
 

@@ -12,6 +12,7 @@ use ottotom_testsupport::timestamps::get_all_timestamps;
 // om[verify info.value] - info samples carry value 1
 // om[verify metricfamily.nointerleave]
 // c[verify resource.target-labels]
+// c[verify scope.labels-on-points]
 fn matches_snapshot() {
     let metrics = make_test_metrics();
     let erasable_timestamps = get_all_timestamps(&metrics);

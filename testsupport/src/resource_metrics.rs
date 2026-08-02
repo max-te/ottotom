@@ -1,6 +1,6 @@
 use crate::reader::TestMetricsReader;
-use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
+use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
@@ -16,7 +16,13 @@ pub fn make_test_metrics() -> ResourceMetrics {
         )
         .with_reader(reader.clone())
         .build();
-    let meter = meter_provider.meter("meter.1");
+    let meter = meter_provider.meter_with_scope(
+        InstrumentationScope::builder("meter.1")
+            .with_version("0.0.1")
+            .with_schema_url("http://example.com/schema")
+            .with_attributes([KeyValue::new("scopek", "scopev")])
+            .build(),
+    );
 
     let gauge = meter
         .f64_gauge("f64.gauge")

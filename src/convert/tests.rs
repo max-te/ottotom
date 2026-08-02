@@ -161,18 +161,30 @@ fn test_write_attrs() {
 
 #[test]
 // c[verify scope.config-disable] - behavior differs with/without the feature
+// c[verify scope.name-version] - scope name and version become info attributes
 fn test_make_scope_name_attrs() {
     let scope_name = "test_scope";
-    let attr = make_scope_name_attrs(scope_name);
+    let attrs = make_scope_name_attrs(scope_name, None);
 
     if cfg!(feature = "otel_scope_info") {
-        assert!(attr.is_some());
-        if let Some(kv) = attr {
-            assert_eq!(kv.key.as_str(), "otel_scope_name");
-            assert_eq!(kv.value.as_str(), "test_scope");
-        }
+        assert_eq!(attrs.len(), 1);
+        assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
+        assert_eq!(attrs[0].value.as_str(), "test_scope");
     } else {
-        assert!(attr.is_none());
+        assert!(attrs.is_empty());
+    }
+
+    let scope_version = "1.2.3";
+    let attrs = make_scope_name_attrs(scope_name, Some(scope_version));
+
+    if cfg!(feature = "otel_scope_info") {
+        assert_eq!(attrs.len(), 2);
+        assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
+        assert_eq!(attrs[0].value.as_str(), "test_scope");
+        assert_eq!(attrs[1].key.as_str(), "otel_scope_version");
+        assert_eq!(attrs[1].value.as_str(), "1.2.3");
+    } else {
+        assert!(attrs.is_empty());
     }
 }
 
