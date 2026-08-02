@@ -248,8 +248,6 @@ fn test_to_timestamp() {
 
 #[cfg(feature = "otel_scope_info")]
 #[test]
-// c[verify scope.info]
-// c[verify scope.name-version]
 fn test_write_otel_scope_info() {
     let resource_metrics = make_test_metrics();
     let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
@@ -257,10 +255,14 @@ fn test_write_otel_scope_info() {
     let mut output = String::new();
     write_otel_scope_info(&mut output, &scopes).unwrap();
 
+    // c[verify scope.info]
     assert!(output.contains("# TYPE otel_scope info"));
     assert!(output.contains("otel_scope_info{"));
+    // c[verify scope.name-version]
     assert!(output.contains("otel_scope_name=\"meter.1\""));
     assert!(output.contains("otel_scope_version="));
+    // c[verify scope.attribute-labels] - scope attributes become labels
+    assert!(output.contains("scopek=\"scopev\""));
 }
 
 #[test]
