@@ -3,7 +3,9 @@
 A Rust crate for exporting OpenTelemetry metrics in the [OpenMetrics](https://github.com/prometheus/OpenMetrics) text format.
 This serves as a protobuf-free alternative to the discontinued `opentelemetry-prometheus` crate.
 
-> ⚠️ **Warning:** This implementation is not fully spec-compliant for [OpenTelemetry-to-OpenMetrics conversion](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md). Some edge cases and complex metrics setups may not be handled correctly. This library is still in an experimental state.
+This implementation tries to follow the [OpenTelemetry-to-OpenMetrics conversion](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md) spec,
+though it takes some liberties where it contradicts the OpenMetrics spec. Some edge cases and complex metrics setups may not be handled correctly.
+See [Tracey spec tracking](#tracey-spec-tracking) for how spec-compliance is tracked.
 
 ## Features
 
