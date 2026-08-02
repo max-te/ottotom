@@ -430,7 +430,9 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
 
     let ts = to_timestamp(sum.time());
 
-    if sum.is_monotonic() {
+    // c[impl sum.total-suffix]
+    if sum.is_monotonic() && !ctx.name.ends_with("_total") {
+        // TODO: config option not to add _total
         for point in points {
             attrs.clear();
             let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));

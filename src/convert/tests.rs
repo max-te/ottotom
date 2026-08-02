@@ -268,6 +268,7 @@ fn test_write_gauge() {
 
 #[test]
 // c[verify sum.cumulative-monotonic]
+// c[verify sum.total-suffix]
 fn test_write_counter() {
     let metric = make_u64_counter_metric(vec![(125, vec![KeyValue::new("kk", "v1")])]);
     let ts = metric
@@ -289,6 +290,17 @@ fn test_write_counter() {
 
     let output = output.replace(&ts, "<TIMESTAMP>");
     assert_snapshot!(strip_otel_scope_name(&output));
+
+    let mut output2 = String::new();
+    let mut ctx = Context {
+        name: "mycounter_total".to_owned(),
+        scope_name: "myscope",
+        ..Context::with_output(&mut output2)
+    };
+    write_counter(&mut ctx, &metric).unwrap();
+    let output2 = output2.replace(&ts, "<TIMESTAMP>");
+
+    assert_eq!(output, output2);
 }
 
 #[cfg(not(feature = "experimental-histogram-min-max"))]
