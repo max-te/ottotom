@@ -2,7 +2,7 @@
 source: src/convert/tests.rs
 expression: strip_otel_scope_name(&output)
 ---
-my_u64_hist_created{} <TIMESTAMP> <TIMESTAMP>
+my_u64_hist_created{k="v"} <TIMESTAMP> <TIMESTAMP>
 my_u64_hist_count{k="v"} 1 <TIMESTAMP>
 my_u64_hist_sum{k="v"} 50 <TIMESTAMP>
 my_u64_hist_bucket{k="v",le="0.0"} 0 <TIMESTAMP>

@@ -296,19 +296,7 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
     let scope_name_attrs = make_scope_name_attrs(ctx.scope_name, ctx.scope_version);
     let ts = to_timestamp(histogram.time());
     let created = to_timestamp(histogram.start_time());
-    ctx.attr_buffer.clear();
     let attrs = &mut ctx.attr_buffer;
-    let Ok(()) = write_attrs(attrs, scope_name_attrs.iter());
-    // c[impl histogram.created]
-    // FIXME: _created should be once per label set
-    uwriteln!(
-        ctx.f,
-        "{}_created{{{}}} {} {}"
-        ctx.name,
-        attrs,
-        created,
-        ts,
-    )?;
     assert_eq!(
         histogram.temporality(),
         Temporality::Cumulative,
@@ -322,6 +310,16 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
     for point in points {
         attrs.clear();
         let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
+
+        // c[impl histogram.created]
+        uwriteln!(
+            ctx.f,
+            "{}_created{{{}}} {} {}"
+            ctx.name,
+            attrs,
+            created,
+            ts,
+        )?;
 
         // om[impl metricpoint.nointerleave] - all value samples of one MetricPoint are written contiguously
         // c[impl histogram.count]

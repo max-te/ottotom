@@ -2,7 +2,7 @@
 source: src/convert/tests.rs
 expression: strip_otel_scope_name(&output)
 ---
-myhistogram_created{} <START_TIMESTAMP> <TIMESTAMP>
+myhistogram_created{kk="v1"} <START_TIMESTAMP> <TIMESTAMP>
 myhistogram_count{kk="v1"} 3 <TIMESTAMP>
 myhistogram_sum{kk="v1"} 150.0 <TIMESTAMP>
 myhistogram_bucket{kk="v1",le="0.0"} 1 <TIMESTAMP>
@@ -21,6 +21,7 @@ myhistogram_bucket{kk="v1",le="5000.0"} 3 <TIMESTAMP>
 myhistogram_bucket{kk="v1",le="7500.0"} 3 <TIMESTAMP>
 myhistogram_bucket{kk="v1",le="10000.0"} 3 <TIMESTAMP>
 myhistogram_bucket{kk="v1",le="+Inf"} 3 <TIMESTAMP>
+myhistogram_created{kk="v2"} <START_TIMESTAMP> <TIMESTAMP>
 myhistogram_count{kk="v2"} 2 <TIMESTAMP>
 myhistogram_sum{kk="v2"} 150.0 <TIMESTAMP>
 myhistogram_bucket{kk="v2",le="0.0"} 0 <TIMESTAMP>
