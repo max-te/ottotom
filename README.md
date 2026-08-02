@@ -36,3 +36,29 @@ let exporter = init_openmetrics_exporter();
 let openmetrics = exporter.text();
 println!("{}", openmetrics);
 ```
+
+## Tracey spec tracking
+
+This project uses [Tracey](https://tracey.bearcove.eu/) to track which requirements of its
+source specifications are implemented and tested. The configuration lives in
+`.config/tracey/config.styx` and tracks two specification documents:
+
+- `docs/spec/openmetrics.md`, condensed from the [OpenMetrics text format](https://github.com/prometheus/OpenMetrics/blob/main/specification/OpenMetrics.md)
+  spec. Annotations use the `om[...]` prefix.
+- `docs/spec/conversion.md`, condensed from the [OTLP metric points to Prometheus](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md)
+  conversion spec. Annotations use the `c[...]` prefix.
+
+Spec requirements are referenced inline in the code via comment annotations:
+
+```text
+// om[impl text.eof]        // this code implements a requirement
+// om[verify text.eof]      // this test verifies a requirement
+// c[related metadata.unit-suffix]  // loosely connected
+```
+
+Useful commands:
+
+- `mise run tracey-status` coverage overview per spec/implementation.
+- `mise run tracey-validate` validate annotation references and naming.
+- `tracey web` interactive coverage dashboard.
+- `tracey uncovered` / `tracey untested` list the remaining work.
