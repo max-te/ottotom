@@ -5,8 +5,8 @@ use opentelemetry::{Array, KeyValue, Value};
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
     make_f64_counter_metric, make_f64_exponential_histogram_metric_handle, make_f64_gauge_metric,
-    make_i64_counter_metric, make_i64_gauge_metric, make_u64_counter_metric,
-    make_u64_counter_metric_handle, make_u64_gauge_metric,
+    make_i64_counter_metric, make_i64_gauge_metric, make_u64_counter_metric_handle,
+    make_u64_gauge_metric, make_u64_gauge_metric_handle,
 };
 #[cfg(not(feature = "experimental-histogram-min-max"))]
 use ottotom_testsupport::metric_data::{make_f64_histogram_metric, make_u64_histogram_metric};
@@ -415,37 +415,43 @@ fn test_write_gauge() {
 // c[verify sum.cumulative-monotonic]
 // c[verify sum.total-suffix]
 fn test_write_counter() {
-    let metric = make_u64_counter_metric(vec![(125, vec![KeyValue::new("kk", "v1")])]);
-    let ts = metric
-        .time()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
-        .to_string();
+    let values = vec![(125, vec![KeyValue::new("kk", "v1")])];
 
-    let mut output = String::new();
+    // Build a counter family by name, write its samples, and mask the volatile
+    // timestamps. The name (via `extract_type_unit_and_name`) and the data (via
+    // `write_counter`) both come from the same instrument.
+    let render = |name: &'static str| {
+        let handle = make_u64_counter_metric_handle(name, None, None, values.clone());
+        let sum = handle.extract::<Sum<u64>>().unwrap();
+        let ts = sum
+            .time()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64()
+            .to_string();
 
-    let mut ctx = Context {
-        attr_buffer: String::from("staledata"),
-        name: "mycounter".to_owned(),
-        scope_name: "myscope",
-        ..Context::with_output(&mut output)
+        let mut output = String::new();
+        let mut ctx = Context {
+            attr_buffer: String::from("staledata"),
+            scope_name: "myscope",
+            ..Context::with_output(&mut output)
+        };
+        assert!(extract_type_unit_and_name(&mut ctx, &handle));
+        write_counter(&mut ctx, &sum).unwrap();
+
+        output.replace(&ts, "<TIMESTAMP>")
     };
-    write_counter(&mut ctx, &metric).unwrap();
 
-    let output = output.replace(&ts, "<TIMESTAMP>");
+    let output = render("mycounter");
     assert_snapshot!(strip_otel_scope_name(&output));
 
-    let mut output2 = String::new();
-    let mut ctx = Context {
-        name: "mycounter_total".to_owned(),
-        scope_name: "myscope",
-        ..Context::with_output(&mut output2)
-    };
-    write_counter(&mut ctx, &metric).unwrap();
-    let output2 = output2.replace(&ts, "<TIMESTAMP>");
-
-    assert_eq!(output, output2);
+    // c[verify sum.total-suffix] - a pre-existing `_total` in the metric name is
+    // stripped from the MetricFamily name and re-appended to the value sample,
+    // so `mycounter` and `mycounter_total` converge on the same family.
+    assert_eq!(
+        strip_otel_scope_name(&output),
+        strip_otel_scope_name(&render("mycounter_total"))
+    );
 }
 
 #[cfg(not(feature = "experimental-histogram-min-max"))]
@@ -631,6 +637,25 @@ fn test_extract_type_unit_and_name_no_unit() {
     assert_eq!(ctx.typ, "histogram");
     assert_eq!(ctx.name, "histo");
     assert!(ctx.unit.is_none());
+}
+
+#[test]
+// c[verify sum.total-suffix] - a pre-existing `_total` is stripped from the
+// MetricFamily name only for counters; other types keep the suffix.
+fn test_extract_strip_total_suffix() {
+    let values = vec![(1, vec![KeyValue::new("k", "v")])];
+
+    let counter = make_u64_counter_metric_handle("mycounter_total", None, None, values.clone());
+    let mut counter_output = String::new();
+    let mut ctx = Context::with_output(&mut counter_output);
+    assert!(extract_type_unit_and_name(&mut ctx, &counter));
+    assert_eq!(ctx.name, "mycounter");
+
+    let gauge = make_u64_gauge_metric_handle("gauge_total", None, None, values);
+    let mut gauge_output = String::new();
+    let mut ctx = Context::with_output(&mut gauge_output);
+    assert!(extract_type_unit_and_name(&mut ctx, &gauge));
+    assert_eq!(ctx.name, "gauge_total");
 }
 
 mod write_values {

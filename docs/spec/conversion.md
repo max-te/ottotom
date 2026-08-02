@@ -103,6 +103,7 @@ Sums not matching any conversion rule MUST be dropped.
 
 c[sum.total-suffix]
 If the metric name for a monotonic Sum does not end in `_total`, a `_total` suffix MUST be added by default, otherwise the name MUST remain unchanged. Exporters SHOULD provide a configuration option to disable the addition of `_total` suffixes.
+(The latter contradicts om[counter.suffix] and will not be implemented.)
 
 c[sum.created]
 Monotonic Sum metric points with `StartTimeUnixNano` SHOULD export the `{name}_created` metric.

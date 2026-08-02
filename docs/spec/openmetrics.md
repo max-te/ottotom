@@ -69,6 +69,11 @@ Bucket thresholds MUST NOT equal NaN.
 om[histogram.integers]
 Count and bucket values MUST be integers.
 
+### Counter
+
+om[counter.suffix]
+The MetricPoint's Total Value Sample MetricName MUST have the suffix `_total`. If present the MetricPoint's Created Value Sample MetricName MUST have the suffix `_created`.
+
 ### StateSet
 
 om[stateset.suffix]

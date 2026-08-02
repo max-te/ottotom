@@ -149,6 +149,15 @@ fn extract_type_unit_and_name(
 
     ctx.name.clear();
     let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name(), NameKind::Metric);
+    // The family name must not end in `_total`: `write_counter` builds the
+    // samples by appending `_total` to it. A metric name that already ends in
+    // `_total` is stripped here and re-appended by `write_counter`, so the
+    // emitted sample name is unchanged.
+    // om[related counter.suffix]
+    // c[related sum.total-suffix]
+    if ctx.typ == "counter" && ctx.name.ends_with("_total") {
+        ctx.name.truncate(ctx.name.len() - "_total".len());
+    }
     // om[impl metadata.unit-suffix]
     // c[impl metadata.unit-suffix]
     if let Some(ref unit) = ctx.unit
@@ -428,12 +437,13 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
 
     let ts = to_timestamp(sum.time());
 
-    // c[impl sum.total-suffix]
-    if sum.is_monotonic() && !ctx.name.ends_with("_total") {
-        // TODO: config option not to add _total
+    if sum.is_monotonic() {
         for point in points {
             attrs.clear();
             let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
+            // c[impl sum.total-suffix] - the family name is bare (see
+            // `extract_type_unit_and_name`), so the `_total` suffix is always
+            // appended to the value sample.
             uwriteln!(
                 ctx.f,
                 "{}_total{{{}}} {} {}",
