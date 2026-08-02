@@ -30,10 +30,9 @@ ufmt = { version = "0.2.0", features = ["std"] }
 [features]
 exporter = []
 tracing = ["dep:tracing"]
-experimental-histogram-min-max = []
-otel_scope_info = []
+experimental = []
 fast = ["dep:itoa", "dep:memchr"]
-default = ["tracing", "exporter", "otel_scope_info", "fast"]
+default = ["tracing", "exporter", "fast"]
 
 [dev-dependencies]
 ottotom-testsupport.workspace = true

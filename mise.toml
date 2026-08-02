@@ -28,8 +28,7 @@ run = [
   "cargo llvm-cov clean --workspace",
   "echo '=== default features ===' && cargo llvm-cov --no-report nextest --workspace",
   "echo '=== --no-default-features ===' && cargo llvm-cov --no-report nextest --no-default-features",
-  "echo '=== --no-default-features --features otel_scope_info ===' && cargo llvm-cov --no-report nextest --no-default-features --features otel_scope_info",
-  "echo '=== --features experimental-histogram-min-max (lib only) ===' && cargo llvm-cov --no-report nextest --lib --features experimental-histogram-min-max",
+  "echo '=== --features experimental ===' && cargo llvm-cov --no-report nextest --features experimental",
   "cargo llvm-cov report --lcov --output-path target/lcov.info",
   "cargo llvm-cov report --html --output-dir target/coverage",
   "cargo llvm-cov report",
@@ -52,8 +51,7 @@ description = "Run tests across all feature combinations"
 run = [
   "echo '=== default features ===' && cargo nextest run",
   "echo '=== --no-default-features ===' && cargo nextest run --no-default-features",
-  "echo '=== --no-default-features --features otel_scope_info ===' && cargo nextest run --no-default-features --features otel_scope_info",
-  "echo '=== --features experimental-histogram-min-max (lib only) ===' && cargo test --lib --features experimental-histogram-min-max",
+  "echo '=== --features experimental ===' && cargo nextest run --features experimental",
 ]
 
 [tasks.doc]

@@ -21,15 +21,85 @@ mod unit;
 // om[impl text.contenttype]
 pub const MIME_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
+/// Configuration for the OpenMetrics conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Config {
+    otel_scope_info: bool,
+    histogram_min_max: bool,
+}
+
+impl Config {
+    /// Returns a builder for the conversion configuration.
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::default()
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            // Preserve the historical default: the `otel_scope_info` cargo
+            // feature was enabled by default.
+            otel_scope_info: true,
+            // The experimental min/max output is off by default; it can only be
+            // enabled through the builder's `experimental`-gated setter.
+            histogram_min_max: false,
+        }
+    }
+}
+
+/// Builder for [`Config`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ConfigBuilder {
+    config: Config,
+}
+
+impl ConfigBuilder {
+    /// Sets whether to write `target_info` and `otel_scope_info` info metrics
+    /// and add `otel_scope_name`/`otel_scope_version` labels on every point.
+    pub fn otel_scope_info(mut self, value: bool) -> Self {
+        self.config.otel_scope_info = value;
+        self
+    }
+
+    /// Sets whether to emit non-compliant `_min`/`_max` samples for histograms.
+    ///
+    /// Available only when the `experimental` feature is enabled; the crate's
+    /// own tests always see it.
+    #[cfg(any(test, feature = "experimental"))]
+    pub fn histogram_min_max(mut self, value: bool) -> Self {
+        self.config.histogram_min_max = value;
+        self
+    }
+
+    /// Builds the [`Config`].
+    pub fn build(self) -> Config {
+        self.config
+    }
+}
+
 /// Trait to write the metrics data in OpenMetrics text format.
 pub trait WriteOpenMetrics {
     /// Writes the metrics into `f` in OpenMetrics text format.
-    fn write_as_openmetrics(&self, f: &mut impl Write) -> std::fmt::Result;
+    fn write_as_openmetrics(&self, f: &mut impl Write) -> std::fmt::Result {
+        self.write_as_openmetrics_with_config(f, Config::default())
+    }
+    /// Writes the metrics into `f` in OpenMetrics text format, honoring `config`.
+    fn write_as_openmetrics_with_config(
+        &self,
+        f: &mut impl Write,
+        config: Config,
+    ) -> std::fmt::Result;
     /// Creates and returns a [String] of the metrics data in OpenMetrics text format.
     /// om[impl text.utf8] - output is always a valid UTF-8 String
     fn to_openmetrics_string(&self) -> Result<String, std::fmt::Error> {
+        self.to_openmetrics_string_with_config(Config::default())
+    }
+    /// Creates and returns a [String] of the metrics data in OpenMetrics text
+    /// format, honoring `config`.
+    fn to_openmetrics_string_with_config(&self, config: Config) -> Result<String, std::fmt::Error> {
         let mut out = String::new();
-        self.write_as_openmetrics(&mut out)?;
+        self.write_as_openmetrics_with_config(&mut out, config)?;
         Ok(out)
     }
 }
@@ -38,6 +108,8 @@ pub trait WriteOpenMetrics {
 struct Context<'f, W: uWrite> {
     /// the output [Write] reference
     f: W,
+    /// the conversion configuration
+    config: Config,
     /// a temporary buffer to store the serialized metric attributes
     attr_buffer: String,
     /// the sanitized name of the current metric
@@ -53,9 +125,15 @@ struct Context<'f, W: uWrite> {
 }
 
 impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
+    #[cfg(test)]
     fn with_output(f: &'f mut W) -> Self {
+        Self::with_config(f, Config::default())
+    }
+
+    fn with_config(f: &'f mut W, config: Config) -> Self {
         Context {
             f: WriteAsUWrite(f),
+            config,
             attr_buffer: String::with_capacity(256),
             name: String::with_capacity(64),
             unit: None,
@@ -81,21 +159,27 @@ impl<W: Write> uWrite for WriteAsUWrite<'_, W> {
 }
 
 impl WriteOpenMetrics for ResourceMetrics {
-    fn write_as_openmetrics(&self, f: &mut impl Write) -> std::fmt::Result {
-        let mut ctx = Context::with_output(f);
+    fn write_as_openmetrics_with_config(
+        &self,
+        f: &mut impl Write,
+        config: Config,
+    ) -> std::fmt::Result {
+        let mut ctx = Context::with_config(f, config);
 
-        #[cfg(feature = "otel_scope_info")]
-        write_target_info(&mut ctx.f, self.resource())?;
+        if ctx.config.otel_scope_info {
+            write_target_info(&mut ctx.f, self.resource())?;
+        }
 
         let mut scopes: Vec<&ScopeMetrics> = self.scope_metrics().collect();
         scopes.sort_unstable_by_key(|s| s.scope().name());
 
-        // c[impl scope.config-disable] - the cargo feature is the configuration switch
-        #[cfg(feature = "otel_scope_info")]
-        write_otel_scope_info(&mut ctx.f, &scopes)?;
+        if ctx.config.otel_scope_info {
+            // c[impl scope.config-disable] - the config struct is the configuration switch
+            write_otel_scope_info(&mut ctx.f, &scopes, &ctx.config)?;
+        }
 
         for scope in scopes {
-            if cfg!(feature = "otel_scope_info") {
+            if ctx.config.otel_scope_info {
                 ctx.scope_name = scope.scope().name();
                 ctx.scope_version = scope.scope().version();
             }
@@ -120,7 +204,6 @@ impl WriteOpenMetrics for ResourceMetrics {
     }
 }
 
-#[cfg(feature = "otel_scope_info")]
 // c[impl resource.target-info]
 fn write_target_info<U: uWrite>(
     f: &mut U,
@@ -244,17 +327,18 @@ fn write_header<U: uWrite>(ctx: &mut Context<'_, U>, description: &str) -> Resul
 
 /// Write a `otel_scope` metric of type info for all scopes in `metrics`
 /// according to the [spec](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#instrumentation-scope-1).
-#[cfg(feature = "otel_scope_info")]
 fn write_otel_scope_info<U: uWrite>(
     f: &mut U,
     metrics: &'_ Vec<&ScopeMetrics>,
+    config: &Config,
 ) -> Result<(), U::Error> {
     // c[impl scope.info]
     f.write_str("# TYPE otel_scope info\n")?;
 
     for scope in metrics {
         // c[impl scope.name-version]
-        let otel_attrs = make_scope_name_attrs(scope.scope().name(), scope.scope().version());
+        let otel_attrs =
+            make_scope_name_attrs(config, scope.scope().name(), scope.scope().version());
         f.write_str("otel_scope_info{")?;
         // c[impl scope.attribute-labels]
         write_attrs(f, otel_attrs.iter().chain(scope.scope().attributes()))?;
@@ -304,7 +388,7 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
     histogram: &Histogram<T>,
 ) -> Result<(), U::Error> {
     // c[impl scope.labels-on-points]
-    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name, ctx.scope_version);
+    let scope_name_attrs = make_scope_name_attrs(&ctx.config, ctx.scope_name, ctx.scope_version);
     let ts = to_timestamp(histogram.time());
     let created = to_timestamp(histogram.start_time());
     let attrs = &mut ctx.attr_buffer;
@@ -355,8 +439,7 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             )?;
         }
 
-        #[cfg(feature = "experimental-histogram-min-max")]
-        {
+        if ctx.config.histogram_min_max {
             // Non-compliant but useful
             // TODO: Expose as a separate gauge?
             if let Some(min) = point.min() {
@@ -447,7 +530,7 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
 ) -> Result<(), U::Error> {
     let attrs = &mut ctx.attr_buffer;
     // c[impl scope.labels-on-points]
-    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name, ctx.scope_version);
+    let scope_name_attrs = make_scope_name_attrs(&ctx.config, ctx.scope_name, ctx.scope_version);
     assert_eq!(
         sum.temporality(),
         opentelemetry_sdk::metrics::Temporality::Cumulative,
@@ -515,7 +598,7 @@ fn write_gauge<T: Numeric + Copy, U: uWrite>(
 ) -> Result<(), U::Error> {
     let attrs = &mut ctx.attr_buffer;
     // c[impl scope.labels-on-points]
-    let scope_name_attrs = make_scope_name_attrs(ctx.scope_name, ctx.scope_version);
+    let scope_name_attrs = make_scope_name_attrs(&ctx.config, ctx.scope_name, ctx.scope_version);
     let ts = to_timestamp(gauge.time());
     let mut points: Vec<_> = gauge.data_points().collect();
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
@@ -536,12 +619,17 @@ fn write_gauge<T: Numeric + Copy, U: uWrite>(
     Ok(())
 }
 
-/// Makes an `otel_scope_name` attribute with the specified `scope_name` if the `otel_scope_info` feature is active.
+/// Makes an `otel_scope_name` attribute with the specified `scope_name` if
+/// the config enables `otel_scope_info`.
 // c[impl scope.labels-on-points]
 #[inline]
-fn make_scope_name_attrs(scope_name: &str, scope_version: Option<&str>) -> Vec<KeyValue> {
+fn make_scope_name_attrs(
+    config: &Config,
+    scope_name: &str,
+    scope_version: Option<&str>,
+) -> Vec<KeyValue> {
     // TODO: Get rid of the to_owned here, by not going through KeyValue
-    if cfg!(feature = "otel_scope_info") {
+    if config.otel_scope_info {
         Some(KeyValue::new("otel_scope_name", scope_name.to_owned()))
             .into_iter()
             .chain(scope_version.map(|v| KeyValue::new("otel_scope_version", v.to_owned())))

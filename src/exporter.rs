@@ -6,25 +6,32 @@ use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 
-use crate::convert::WriteOpenMetrics;
+use crate::convert::{Config, WriteOpenMetrics};
 
 /// A [`PushMetricExporter`] which writes metrics into an internal buffer in OpenMetrics text format.
 #[derive(Debug, Clone)]
 pub struct OpenMetricsExporter {
     buffer: Arc<RwLock<String>>,
     backbuffer: Arc<Mutex<String>>,
+    config: Config,
 }
 
 impl Default for OpenMetricsExporter {
     fn default() -> Self {
-        Self {
-            buffer: Arc::new(RwLock::new(String::new())),
-            backbuffer: Arc::new(Mutex::new(String::new())),
-        }
+        Self::new(Config::default())
     }
 }
 
 impl OpenMetricsExporter {
+    /// Create a new exporter with the given conversion [`Config`].
+    pub fn new(config: Config) -> Self {
+        Self {
+            buffer: Arc::new(RwLock::new(String::new())),
+            backbuffer: Arc::new(Mutex::new(String::new())),
+            config,
+        }
+    }
+
     /// Get a clone of the last-exported OpenMetrics text.
     pub fn text(&self) -> String {
         self.buffer.read().map_or_else(
@@ -49,7 +56,7 @@ impl PushMetricExporter for OpenMetricsExporter {
         });
         backbuffer.clear();
         metrics
-            .write_as_openmetrics(&mut *backbuffer)
+            .write_as_openmetrics_with_config(&mut *backbuffer, self.config)
             .map_err(|err| {
                 OTelSdkError::InternalFailure(format!("Failed to write to buffer: {err}"))
             })?;

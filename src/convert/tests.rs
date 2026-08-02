@@ -5,11 +5,10 @@ use opentelemetry::{Array, KeyValue, Value};
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
     make_f64_counter_metric, make_f64_exponential_histogram_metric_handle, make_f64_gauge_metric,
-    make_i64_counter_metric, make_i64_gauge_metric, make_u64_counter_metric_handle,
-    make_u64_gauge_metric, make_u64_gauge_metric_handle,
+    make_f64_histogram_metric, make_i64_counter_metric, make_i64_gauge_metric,
+    make_u64_counter_metric_handle, make_u64_gauge_metric, make_u64_gauge_metric_handle,
+    make_u64_histogram_metric,
 };
-#[cfg(not(feature = "experimental-histogram-min-max"))]
-use ottotom_testsupport::metric_data::{make_f64_histogram_metric, make_u64_histogram_metric};
 use ottotom_testsupport::resource_metrics::make_test_metrics;
 use ottotom_testsupport::timestamps::ExtractTimestamps;
 use ufmt::uwrite;
@@ -18,9 +17,6 @@ use super::*;
 
 fn strip_otel_scope_name(s: &str) -> String {
     let mut result = s.to_owned();
-    if !cfg!(feature = "otel_scope_info") {
-        return result;
-    }
 
     const OTEL_SCOPE_NAME: &str = "otel_scope_name=\"myscope\"";
     while let Some(start) = result.find(OTEL_SCOPE_NAME) {
@@ -303,32 +299,28 @@ fn test_write_attrs_stringify() {
 }
 
 #[test]
-// c[verify scope.config-disable] - behavior differs with/without the feature
+// c[verify scope.config-disable] - behavior differs with/without the config
 // c[verify scope.name-version] - scope name and version become info attributes
 fn test_make_scope_name_attrs() {
     let scope_name = "test_scope";
-    let attrs = make_scope_name_attrs(scope_name, None);
-
-    if cfg!(feature = "otel_scope_info") {
-        assert_eq!(attrs.len(), 1);
-        assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
-        assert_eq!(attrs[0].value.as_str(), "test_scope");
-    } else {
-        assert!(attrs.is_empty());
-    }
+    let attrs = make_scope_name_attrs(&Config::default(), scope_name, None);
+    assert_eq!(attrs.len(), 1);
+    assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
+    assert_eq!(attrs[0].value.as_str(), "test_scope");
 
     let scope_version = "1.2.3";
-    let attrs = make_scope_name_attrs(scope_name, Some(scope_version));
+    let attrs = make_scope_name_attrs(&Config::default(), scope_name, Some(scope_version));
+    assert_eq!(attrs.len(), 2);
+    assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
+    assert_eq!(attrs[0].value.as_str(), "test_scope");
+    assert_eq!(attrs[1].key.as_str(), "otel_scope_version");
+    assert_eq!(attrs[1].value.as_str(), "1.2.3");
 
-    if cfg!(feature = "otel_scope_info") {
-        assert_eq!(attrs.len(), 2);
-        assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
-        assert_eq!(attrs[0].value.as_str(), "test_scope");
-        assert_eq!(attrs[1].key.as_str(), "otel_scope_version");
-        assert_eq!(attrs[1].value.as_str(), "1.2.3");
-    } else {
-        assert!(attrs.is_empty());
-    }
+    let disabled = Config::builder().otel_scope_info(false).build();
+    let attrs = make_scope_name_attrs(&disabled, scope_name, None);
+    assert!(attrs.is_empty());
+    let attrs = make_scope_name_attrs(&disabled, scope_name, Some(scope_version));
+    assert!(attrs.is_empty());
 }
 
 #[test]
@@ -344,14 +336,13 @@ fn test_to_timestamp() {
     assert_eq!(output, "1625097600.0");
 }
 
-#[cfg(feature = "otel_scope_info")]
 #[test]
 fn test_write_otel_scope_info() {
     let resource_metrics = make_test_metrics();
     let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
 
     let mut output = String::new();
-    write_otel_scope_info(&mut output, &scopes).unwrap();
+    write_otel_scope_info(&mut output, &scopes, &Config::default()).unwrap();
 
     // c[verify scope.info]
     assert!(output.contains("# TYPE otel_scope info"));
@@ -582,7 +573,6 @@ fn test_exemplar_roundtrip() {
     );
 }
 
-#[cfg(not(feature = "experimental-histogram-min-max"))]
 #[test]
 // om[verify metric.nointerleave] - all samples of one LabelSet (Metric) precede the next
 // om[verify metricpoint.nointerleave] - count/sum/bucket samples of one point are contiguous
@@ -627,6 +617,45 @@ fn test_write_histogram() {
 }
 
 #[test]
+fn test_write_histogram_with_min_max() {
+    let metric = make_f64_histogram_metric(vec![
+        (125.0, vec![KeyValue::new("kk", "v1")]),
+        (0.0, vec![KeyValue::new("kk", "v1")]),
+        (25.0, vec![KeyValue::new("kk", "v2")]),
+    ]);
+    let ts = metric
+        .time()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+        .to_string();
+    let start_ts = metric
+        .start_time()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+        .to_string();
+
+    let mut output = String::new();
+    let mut ctx = Context {
+        attr_buffer: String::from("staledata"),
+        name: "myhistogram".to_owned(),
+        scope_name: "myscope",
+        config: Config::builder().histogram_min_max(true).build(),
+        ..Context::with_output(&mut output)
+    };
+    write_histogram(&mut ctx, &metric).unwrap();
+    let output = output.replace(&ts, "<TIMESTAMP>");
+    let output = output.replace(&start_ts, "<START_TIMESTAMP>");
+
+    let output = strip_otel_scope_name(&output);
+    assert!(output.contains("myhistogram_min{kk=\"v1\"} 0"));
+    assert!(output.contains("myhistogram_max{kk=\"v1\"} 125"));
+    assert!(output.contains("myhistogram_min{kk=\"v2\"} 25"));
+    assert!(output.contains("myhistogram_max{kk=\"v2\"} 25"));
+}
+
+#[test]
 // c[verify exphist.unimplemented]
 fn test_drop_exponential_histogram() {
     let metric = make_f64_exponential_histogram_metric_handle(
@@ -662,11 +691,11 @@ fn test_write_as_openmetrics() {
 
     // Verify the output has all expected structural elements
     // c[verify resource.target-info]
-    assert!(output.starts_with("# TYPE target info\n") == cfg!(feature = "otel_scope_info"));
-    assert!(output.contains("target_info{") == cfg!(feature = "otel_scope_info"));
+    assert!(output.starts_with("# TYPE target info\n"));
+    assert!(output.contains("target_info{"));
     // c[verify scope.info]
-    assert!(output.contains("# TYPE otel_scope info\n") == cfg!(feature = "otel_scope_info"));
-    assert!(output.contains("otel_scope_info{") == cfg!(feature = "otel_scope_info"));
+    assert!(output.contains("# TYPE otel_scope info\n"));
+    assert!(output.contains("otel_scope_info{"));
     // c[verify metadata.type]
     assert!(output.contains("# TYPE f64_gauge gauge\n"));
     // c[verify metadata.help-description]
@@ -686,6 +715,27 @@ fn test_write_as_openmetrics() {
     assert!(output.contains("histo_bucket{"));
     // om[verify text.eof]
     assert!(output.ends_with("# EOF\n"));
+}
+
+#[test]
+// c[verify scope.config-disable] - disabling scope info in the config drops
+// the info metrics and the scope labels
+fn test_write_as_openmetrics_without_scope_info() {
+    let resource_metrics = make_test_metrics();
+    let mut output = String::new();
+    resource_metrics
+        .write_as_openmetrics_with_config(
+            &mut output,
+            Config::builder().otel_scope_info(false).build(),
+        )
+        .unwrap();
+
+    assert!(!output.starts_with("# TYPE target info\n"));
+    assert!(!output.contains("target_info{"));
+    assert!(!output.contains("# TYPE otel_scope info\n"));
+    assert!(!output.contains("otel_scope_info{"));
+    assert!(!output.contains("otel_scope_name="));
+    assert!(!output.contains("otel_scope_version="));
 }
 
 #[test]
@@ -837,7 +887,6 @@ mod write_values {
         assert_snapshot!(strip_otel_scope_name(&output));
     }
 
-    #[cfg(not(feature = "experimental-histogram-min-max"))]
     #[test]
     // c[verify histogram.bucket]
     // c[verify histogram.bucket.le]
