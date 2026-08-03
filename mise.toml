@@ -85,7 +85,7 @@ run = [
   "git add CHANGELOG.md Cargo.toml Cargo.lock",
   'git commit -m "chore(release): v{{arg(version)}}"',
   "git tag v{{arg(version)}}",
-  "cargo publish",
+  "cargo publish --workspace",
 ]
 
 [tasks.tracey-web]
