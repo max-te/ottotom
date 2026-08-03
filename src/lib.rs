@@ -7,3 +7,7 @@ pub mod convert;
 pub mod exporter;
 
 mod format;
+
+mod private {
+    pub trait Sealed {}
+}

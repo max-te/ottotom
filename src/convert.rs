@@ -79,7 +79,7 @@ impl ConfigBuilder {
 }
 
 /// Trait to write the metrics data in OpenMetrics text format.
-pub trait WriteOpenMetrics {
+pub trait WriteOpenMetrics: crate::private::Sealed {
     /// Writes the metrics into `f` in OpenMetrics text format.
     fn write_as_openmetrics(&self, f: &mut impl Write) -> std::fmt::Result {
         self.write_as_openmetrics_with_config(f, Config::default())
@@ -157,6 +157,8 @@ impl<W: Write> uWrite for WriteAsUWrite<'_, W> {
         self.0.write_char(c)
     }
 }
+
+impl crate::private::Sealed for ResourceMetrics {}
 
 impl WriteOpenMetrics for ResourceMetrics {
     fn write_as_openmetrics_with_config(
