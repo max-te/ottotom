@@ -24,7 +24,8 @@ pub const MIME_TYPE: &str = "application/openmetrics-text; version=1.0.0; charse
 /// Configuration for the OpenMetrics conversion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Config {
-    otel_scope_info: bool,
+    scope_info_enabled: bool,
+    target_info_enabled: bool,
     histogram_min_max: bool,
 }
 
@@ -38,11 +39,8 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            // Preserve the historical default: the `otel_scope_info` cargo
-            // feature was enabled by default.
-            otel_scope_info: true,
-            // The experimental min/max output is off by default; it can only be
-            // enabled through the builder's `experimental`-gated setter.
+            scope_info_enabled: true,
+            target_info_enabled: true,
             histogram_min_max: false,
         }
     }
@@ -55,17 +53,23 @@ pub struct ConfigBuilder {
 }
 
 impl ConfigBuilder {
-    /// Sets whether to write `target_info` and `otel_scope_info` info metrics
+    /// Sets whether to write `otel_scope_info` info metrics
     /// and add `otel_scope_name`/`otel_scope_version` labels on every point.
-    pub fn otel_scope_info(mut self, value: bool) -> Self {
-        self.config.otel_scope_info = value;
+    /// This option is enabled by default.
+    pub fn scope_info_enabled(mut self, value: bool) -> Self {
+        self.config.scope_info_enabled = value;
+        self
+    }
+
+    /// Sets whether to write `target_info` info metrics.
+    /// This option is enabled by default.
+    pub fn target_info_enabled(mut self, value: bool) -> Self {
+        self.config.target_info_enabled = value;
         self
     }
 
     /// Sets whether to emit non-compliant `_min`/`_max` samples for histograms.
-    ///
-    /// Available only when the `experimental` feature is enabled; the crate's
-    /// own tests always see it.
+    /// This option is disabled by default.
     #[cfg(any(test, feature = "experimental"))]
     pub fn histogram_min_max(mut self, value: bool) -> Self {
         self.config.histogram_min_max = value;
@@ -168,20 +172,20 @@ impl WriteOpenMetrics for ResourceMetrics {
     ) -> std::fmt::Result {
         let mut ctx = Context::with_config(f, config);
 
-        if ctx.config.otel_scope_info {
+        if ctx.config.target_info_enabled {
             write_target_info(&mut ctx.f, self.resource())?;
         }
 
         let mut scopes: Vec<&ScopeMetrics> = self.scope_metrics().collect();
         scopes.sort_unstable_by_key(|s| s.scope().name());
 
-        if ctx.config.otel_scope_info {
+        if ctx.config.scope_info_enabled {
             // c[impl scope.config-disable] - the config struct is the configuration switch
             write_otel_scope_info(&mut ctx.f, &scopes, &ctx.config)?;
         }
 
         for scope in scopes {
-            if ctx.config.otel_scope_info {
+            if ctx.config.scope_info_enabled {
                 ctx.scope_name = scope.scope().name();
                 ctx.scope_version = scope.scope().version();
             }
@@ -631,7 +635,7 @@ fn make_scope_name_attrs(
     scope_version: Option<&str>,
 ) -> Vec<KeyValue> {
     // TODO: Get rid of the to_owned here, by not going through KeyValue
-    if config.otel_scope_info {
+    if config.scope_info_enabled {
         Some(KeyValue::new("otel_scope_name", scope_name.to_owned()))
             .into_iter()
             .chain(scope_version.map(|v| KeyValue::new("otel_scope_version", v.to_owned())))

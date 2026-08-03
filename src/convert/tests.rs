@@ -316,7 +316,7 @@ fn test_make_scope_name_attrs() {
     assert_eq!(attrs[1].key.as_str(), "otel_scope_version");
     assert_eq!(attrs[1].value.as_str(), "1.2.3");
 
-    let disabled = Config::builder().otel_scope_info(false).build();
+    let disabled = Config::builder().scope_info_enabled(false).build();
     let attrs = make_scope_name_attrs(&disabled, scope_name, None);
     assert!(attrs.is_empty());
     let attrs = make_scope_name_attrs(&disabled, scope_name, Some(scope_version));
@@ -726,16 +726,33 @@ fn test_write_as_openmetrics_without_scope_info() {
     resource_metrics
         .write_as_openmetrics_with_config(
             &mut output,
-            Config::builder().otel_scope_info(false).build(),
+            Config::builder().scope_info_enabled(false).build(),
         )
         .unwrap();
 
-    assert!(!output.starts_with("# TYPE target info\n"));
-    assert!(!output.contains("target_info{"));
+    assert!(output.starts_with("# TYPE target info\n"));
+    assert!(output.contains("target_info{"));
     assert!(!output.contains("# TYPE otel_scope info\n"));
     assert!(!output.contains("otel_scope_info{"));
     assert!(!output.contains("otel_scope_name="));
     assert!(!output.contains("otel_scope_version="));
+}
+
+#[test]
+fn test_write_as_openmetrics_without_target_info() {
+    let resource_metrics = make_test_metrics();
+    let mut output = String::new();
+    resource_metrics
+        .write_as_openmetrics_with_config(
+            &mut output,
+            Config::builder().target_info_enabled(false).build(),
+        )
+        .unwrap();
+
+    assert!(!output.contains("target_info"));
+    assert!(output.contains("otel_scope_info{"));
+    assert!(output.contains("otel_scope_name="));
+    assert!(output.contains("otel_scope_version="));
 }
 
 #[test]
