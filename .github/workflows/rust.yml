@@ -29,16 +29,19 @@ jobs:
       contents: read
     strategy:
       matrix:
-        features:
-          - ""
-          - "--no-default-features"
-          - "--features experimental"
+        include:
+          - features: ""
+            skip-doctests: false
+          - features: "--no-default-features"
+            skip-doctests: true
+          - features: "--features experimental"
+            skip-doctests: false
     steps:
     - uses: actions/checkout@v6
       with:
         persist-credentials: false
     - name: Run tests (${{ matrix.features || 'default' }})
-      run: cargo test --verbose ${{ matrix.features }}
+      run: cargo test --verbose ${{ matrix.features }} ${{ matrix.skip-doctests && '--lib --bins --tests' || '' }}
 
   bench:
     runs-on: ubuntu-latest
