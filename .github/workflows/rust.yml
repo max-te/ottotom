@@ -10,13 +10,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  check:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v6
-    - name: Build
-      run: cargo check --verbose
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Check
+      run: cargo check --all
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - ""
+          - "--no-default-features"
+          - "--features experimental"
+    steps:
+    - uses: actions/checkout@v6
+    - name: Run tests (${{ matrix.features || 'default' }})
+      run: cargo test --verbose ${{ matrix.features }}
