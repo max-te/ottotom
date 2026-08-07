@@ -1,5 +1,7 @@
 # Ottotom (OpenTelemetry to text OpenMetrics)
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/max-te/ottotom?utm_source=badge)
+
 A Rust crate for exporting OpenTelemetry metrics in the [OpenMetrics](https://github.com/prometheus/OpenMetrics) text format.
 This serves as a protobuf-free alternative to the discontinued `opentelemetry-prometheus` crate.
 

@@ -39,7 +39,12 @@ ottotom-testsupport.workspace = true
 openmetrics-parser = "0.4.4"
 tango-bench = "0.6"
 insta = { version = "1.43.2" }
+divan = { version = "5.0.1", package = "codspeed-divan-compat" }
 
 [[bench]]
 name = "converter"
+harness = false
+
+[[bench]]
+name = "conversion"
 harness = false
