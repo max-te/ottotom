@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         persist-credentials: false
     - name: Check
@@ -37,7 +37,7 @@ jobs:
           - features: "--features experimental"
             skip-doctests: false
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         persist-credentials: false
     - name: Run tests (${{ matrix.features || 'default' }})
@@ -51,7 +51,7 @@ jobs:
       # Fail CI when a statistically significant regression exceeds this %.
       BENCH_FAIL_THRESHOLD: 7
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
         persist-credentials: false
