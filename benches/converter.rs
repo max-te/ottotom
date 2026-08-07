@@ -71,9 +71,9 @@ fn scaling_benchmarks() -> Vec<Benchmark> {
     benchmarks
 }
 
-fn scale_bench(
+fn scale_bench<M: tango_bench::Metric + 'static>(
     metrics: ResourceMetrics,
-) -> impl FnMut(tango_bench::Bencher) -> Box<dyn tango_bench::ErasedSampler> {
+) -> impl FnMut(tango_bench::Bencher<M>) -> Box<dyn tango_bench::ErasedSampler> {
     let metrics = Rc::new(metrics);
     move |b| {
         let metrics = metrics.clone();
