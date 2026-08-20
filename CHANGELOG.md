@@ -1,3 +1,43 @@
+## [0.33.0-alpha.2] - 2026-08-20
+
+### Features
+
+- [`d6a3ad9`](https://github.com/max-te/ottotom/commit/d6a3ad9267b80a82e9a4f1732a4f6febe065e3d7) *(config)* Split settings for scope/target info
+
+### Bug Fixes
+
+- [`78b1cfd`](https://github.com/max-te/ottotom/commit/78b1cfd6baab6cdea36dccecb5efe168d551e7d5) Publish whole workspace in publish task
+- [`72e8289`](https://github.com/max-te/ottotom/commit/72e82892022fb7a7ce8496fbee0e0c6ba6381e6a) *(ci)* Skip doctests on --no-default-features
+
+### Other
+
+- [`826a607`](https://github.com/max-te/ottotom/commit/826a607334624e343d50483a6372caa54d5942e2) Merge pull request #1 from max-te/dependabot/github_actions/actions/checkout-7
+
+chore(deps): bump actions/checkout from 6 to 7
+## [0.33.0-alpha.1] - 2026-08-03
+
+### Features
+
+- [`372d7c2`](https://github.com/max-te/ottotom/commit/372d7c23bf75fbaa10c5406f3fcaff480e11ebcf) *(convert)* Emit `_created` sample for monotonic sums
+- [`e1a7e38`](https://github.com/max-te/ottotom/commit/e1a7e38ff0cfa77a10b8b7cef90b2f665f574aa6) *(convert)* Write exemplars on histograms and monotonic sums
+
+### Bug Fixes
+
+- [`aa6ceaa`](https://github.com/max-te/ottotom/commit/aa6ceaa04c8c1576cd2423d9b2fcde0e7b688b37) Clippy lints
+- [`37bc8fe`](https://github.com/max-te/ottotom/commit/37bc8fe0c58d0d2d49dbb199d70d998886ae173e) *(clippy)* Apply lint suggestions
+- [`1f57610`](https://github.com/max-te/ottotom/commit/1f57610914e797a10c138cd58206d75c427d7051) *(convert)* Drop delta-temporality sums
+- [`ad9e633`](https://github.com/max-te/ottotom/commit/ad9e633248dc2bf29f5e95dadd2685138f23ab26) *(convert)* Handle case where unit is already part of name
+- [`06862a0`](https://github.com/max-te/ottotom/commit/06862a05f09c33882237fed2a0974072b5a0d761) *(format)* Floats MUST have a decimal point or scientific notation
+- [`57f3bfb`](https://github.com/max-te/ottotom/commit/57f3bfb98ee0eaee6d500a9f873e0494b44d653f) *(convert)* Only emit histogram _sum for non-negative values
+- [`1244a78`](https://github.com/max-te/ottotom/commit/1244a78cffbdf8174349be424836b633aee9f9cc) *(convert)* Skip _total suffix when name already ends in _total
+- [`6e804b5`](https://github.com/max-te/ottotom/commit/6e804b5b24d97d20c8d9eb25d93931ed81ca9cdd) *(convert)* Sanitize attribute keys for Prometheus labels
+- [`fb2ff27`](https://github.com/max-te/ottotom/commit/fb2ff2731d1f592a9b4cb7c5074141ebafe5217a) *(convert)* Emit histogram _created once per label set
+
+### Documentation
+
+- [`cbeab4a`](https://github.com/max-te/ottotom/commit/cbeab4af01a421142fe467a2b20ba5b296149756) *(tracey)* Document openmetrics metrics/metricspoint/metricsfamily distinction
+- [`b1da36f`](https://github.com/max-te/ottotom/commit/b1da36f278713bce7fd7c1eaa216bb245ef358d2) *(readme)* Add Tracey and spec-tracking section
+- [`a58063c`](https://github.com/max-te/ottotom/commit/a58063c2533b6dd1cfe54cf0427d17ada2d94983) *(readme)* Update specs note
 ## [0.32.0] - 2026-05-10
 
 ### Documentation

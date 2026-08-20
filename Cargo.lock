@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "ottotom"
-version = "0.33.0-alpha.1"
+version = "0.33.0-alpha.2"
 dependencies = [
  "codspeed-divan-compat",
  "insta",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "ottotom-testsupport"
-version = "0.33.0-alpha.1"
+version = "0.33.0-alpha.2"
 dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",

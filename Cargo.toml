@@ -1,6 +1,6 @@
 [package]
 name = "ottotom"
-version = "0.33.0-alpha.1"
+version = "0.33.0-alpha.2"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/max-te/ottotom"
@@ -16,7 +16,7 @@ opentelemetry = { version = "0.32.0", default-features = false }
 opentelemetry_sdk = { version = "0.32.0", default-features = false, features = [
     "metrics",
 ] }
-ottotom-testsupport = { path = "testsupport", version = "=0.33.0-alpha.1" }
+ottotom-testsupport = { path = "testsupport", version = "=0.33.0-alpha.2" }
 
 [dependencies]
 opentelemetry.workspace = true
