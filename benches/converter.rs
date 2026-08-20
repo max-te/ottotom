@@ -1,3 +1,4 @@
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::rc::Rc;
 
@@ -83,3 +84,20 @@ fn scale_bench<M: tango_bench::Metric + 'static>(
 
 tango_benchmarks!(benchmarks());
 tango_main!();
+
+#[global_allocator]
+static GLOBAL: NeverGrowInPlaceAllocator = NeverGrowInPlaceAllocator;
+
+struct NeverGrowInPlaceAllocator;
+
+unsafe impl GlobalAlloc for NeverGrowInPlaceAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe {
+            System.dealloc(ptr, layout);
+        }
+    }
+}
