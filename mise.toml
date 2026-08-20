@@ -80,11 +80,12 @@ usage = '''
 arg "<version>" help="Semver version to release (e.g. 0.32.0)"
 '''
 run = [
-  "cargo set-version {{arg(version)}}",
-  "git cliff --tag v{{arg(version)}} --output CHANGELOG.md",
+  'test -z "$(git status --porcelain)" || { echo "error: working tree is not clean, commit or stash changes before releasing" >&2; exit 1; }',
+  "cargo set-version {{usage.version}}",
+  "git cliff --tag v{{usage.version}} --output CHANGELOG.md",
   "git add CHANGELOG.md Cargo.toml Cargo.lock",
-  'git commit -m "chore(release): v{{arg(version)}}"',
-  "git tag v{{arg(version)}}",
+  'git commit -m "chore(release): v{{usage.version}}"',
+  "git tag v{{usage.version}}",
   "cargo publish --workspace",
 ]
 
