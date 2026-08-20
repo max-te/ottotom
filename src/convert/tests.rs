@@ -856,7 +856,9 @@ fn test_extract_strip_total_suffix() {
 mod write_values {
     use super::*;
 
-    fn strip_timestamps(mut text: String, timestamps: Vec<SystemTime>) -> String {
+    fn strip_timestamps(mut text: String, mut timestamps: Vec<SystemTime>) -> String {
+        timestamps.sort();
+        timestamps.reverse();
         for ts in timestamps {
             let ts_string = ts
                 .duration_since(UNIX_EPOCH)
