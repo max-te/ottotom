@@ -20,12 +20,12 @@ jobs:
     name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         persist-credentials: false
 
     - name: Setup rust toolchain, cache and cargo-codspeed binary
-      uses: moonrepo/setup-rust@v1
+      uses: moonrepo/setup-rust@abb2d32350334249b178c401e5ec5836e0cd88d3 # v1
       with:
         channel: stable
         cache-target: release
@@ -35,7 +35,7 @@ jobs:
       run: cargo codspeed build --bench conversion
 
     - name: Run the benchmarks
-      uses: CodSpeedHQ/action@v5
+      uses: CodSpeedHQ/action@f1d600dbe5eb1d03277a466f331e5f19f64fc567 # v5
       with:
         mode: simulation
         run: cargo codspeed run --bench conversion

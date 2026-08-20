@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         persist-credentials: false
     - name: Check
@@ -37,7 +37,7 @@ jobs:
           - features: "--features experimental"
             skip-doctests: false
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         persist-credentials: false
     - name: Run tests (${{ matrix.features || 'default' }})
@@ -51,7 +51,7 @@ jobs:
       # Fail CI when a statistically significant regression exceeds this %.
       BENCH_FAIL_THRESHOLD: 7
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 0
         persist-credentials: false
@@ -94,7 +94,7 @@ jobs:
         fi
     - name: Upload benchmark results
       if: always()
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: bench-results
         path: bench-results.txt
@@ -109,12 +109,12 @@ jobs:
       pull-requests: write
     steps:
     - name: Download benchmark results
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
         name: bench-results
         path: bench-results
     - name: Post benchmark results to PR
-      uses: actions/github-script@v9
+      uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9
       with:
         script: |
           const fs = require('fs');
