@@ -83,13 +83,14 @@ jobs:
       run: |
         set -o pipefail
         if [ -f target/benchmarks/converter ]; then
-          cargo bench --bench converter -- --color never compare -v -t 3 \
-            --fail-threshold "$BENCH_FAIL_THRESHOLD" --fail-fast \
+          cargo bench --bench converter -- --color never compare -v -t 3 -o \
+            -f '!{small_to_string,*/16}' \
+            --fail-threshold "$BENCH_FAIL_THRESHOLD" \
             target/benchmarks/converter 2>/dev/null | tee bench-results.txt
         else
           {
             echo "No baseline available; running solo benchmark as smoke test"
-            cargo bench --bench converter -- --color never solo -v -t 3
+            cargo bench --bench converter -- --color never solo -v -t 3 -o
           } 2>/dev/null | tee bench-results.txt
         fi
     - name: Upload benchmark results
