@@ -85,6 +85,7 @@ jobs:
         if [ -f target/benchmarks/converter ]; then
           cargo bench --bench converter -- --color never compare -v -t 3 -o \
             -f '!{small_to_string,*/16}' \
+            --randomize-stack 4096 --cache-firewall 256 \
             --fail-threshold "$BENCH_FAIL_THRESHOLD" \
             target/benchmarks/converter 2>/dev/null | tee bench-results.txt
         else
