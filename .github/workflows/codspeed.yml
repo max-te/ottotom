@@ -35,7 +35,7 @@ jobs:
       run: cargo codspeed build --bench conversion
 
     - name: Run the benchmarks
-      uses: CodSpeedHQ/action@f1d600dbe5eb1d03277a466f331e5f19f64fc567 # v5
+      uses: CodSpeedHQ/action@4296e51e7041e24dadb86d1d6e8b9320d223dbe8 # v5
       with:
         mode: simulation
         run: cargo codspeed run --bench conversion
