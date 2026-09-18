@@ -8,6 +8,17 @@ body = """
 {% else %}\
     ## [unreleased]
 {% endif %}\
+{% set breaking = commits | filter(attribute="breaking", value=true) %}\
+{% if breaking | length > 0 %}
+    ### Breaking Changes
+    {% for commit in breaking %}
+        - [`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/max-te/ottotom/commit/{{ commit.id }}) {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+            **{{ commit.message | upper_first }}**\
+            {% if commit.breaking_description and commit.breaking_description != commit.message %}\
+                {{ " — " }}{{ commit.breaking_description | trim | split(pat="\n") | join(sep=" ") | upper_first }}\
+            {% endif %}\
+    {% endfor %}
+{% endif %}\
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | striptags | trim | upper_first }}
     {% for commit in commits %}
@@ -44,9 +55,11 @@ commit_parsers = [
     { message = "^doc", group = "<!-- 3 -->Documentation" },
 
     # Skip internal housekeeping.
-    { message = "^chore", skip = true },
-    { message = "^refactor", skip = true },
-    { message = "^ci", skip = true },
+    # `protect_breaking_commits` keeps breaking commits even when their type is
+    # skipped, so these need a sorted group name for that case.
+    { message = "^chore", group = "<!-- 5 -->Other Changes", skip = true },
+    { message = "^refactor", group = "<!-- 5 -->Other Changes", skip = true },
+    { message = "^ci", group = "<!-- 5 -->Other Changes", skip = true },
     { message = "^test", skip = true },
     { message = "^tests", skip = true },
     { message = "^style", skip = true },
