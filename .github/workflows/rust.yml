@@ -18,30 +18,51 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         persist-credentials: false
+    - name: Install cargo-hack
+      uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
+      with:
+        tool: cargo-hack
     - name: Check
       run: cargo check --all
     - name: Clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo hack --feature-powerset --workspace clippy --all-targets -- -D warnings
+    - name: Docs
+      run: cargo doc --all --no-deps
+      env:
+        RUSTDOCFLAGS: -D warnings
+
+  msrv:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    # Keep in sync with `rust-version` in Cargo.toml.
+    - name: Install Rust 1.88
+      run: rustup toolchain install 1.88 --profile minimal
+    - name: Build on the declared MSRV
+      run: cargo +1.88 check --all-features --all
 
   test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      matrix:
-        include:
-          - features: ""
-            skip-doctests: false
-          - features: "--no-default-features"
-            skip-doctests: true
-          - features: "--features experimental"
-            skip-doctests: false
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         persist-credentials: false
-    - name: Run tests (${{ matrix.features || 'default' }})
-      run: cargo test --verbose ${{ matrix.features }} ${{ matrix.skip-doctests && '--lib --bins --tests' || '' }}
+    - name: Install cargo-hack and cargo-nextest
+      uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
+      with:
+        tool: cargo-hack,cargo-nextest
+    # nextest does not run doctests, which needs the
+    # `exporter` feature and runs once below.
+    - name: Run tests (every feature combination)
+      run: cargo hack --feature-powerset --workspace nextest run
+    - name: Run doctests
+      run: cargo test --doc
 
   bench:
     runs-on: ubuntu-latest
