@@ -14,6 +14,22 @@ See [Tracey spec tracking](#tracey-spec-tracking) for how spec-compliance is tra
 - **Conversion** of `opentelemetry-sdk` metric data to OpenMetrics-compliant text.
 - **Ready-to-use Exporter** to register in `opentelemetry`, outputs metrics in the OpenMetrics text format.
 
+Cargo features: `exporter` (the `OpenMetricsExporter`) and `tracing` (log dropped
+metrics and exporter errors) are on by default; `experimental` adds settings that
+produce output outside the OpenMetrics spec.
+
+`experimental` is exempt from this crate's semver guarantees: what it exposes may
+change or disappear in any release, including a patch release.
+
+## Versioning
+
+`ottotom`'s minor version tracks the `opentelemetry` and `opentelemetry_sdk`
+minor it is built against, because their metric data types appear in this
+crate's API. `ottotom` 0.33.x requires `opentelemetry` 0.33 — pick the `ottotom`
+minor that matches the OpenTelemetry version in your dependency tree.
+
+The minimum supported Rust version is 1.88. Raising it is a breaking change.
+
 ## Usage
 
 ```rust,no_run
