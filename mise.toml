@@ -12,6 +12,7 @@ rust = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-edit" = "latest"
 "cargo:cargo-export" = "latest"
+"cargo:cargo-hack" = "latest"
 "cargo:cargo-insta" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
 
@@ -23,12 +24,10 @@ rust = "latest"
 CARGO_TERM_COLOR = "always"
 
 [tasks.coverage]
-description = "Run code coverage across all feature combinations"
+description = "Run code coverage across every feature combination"
 run = [
   "cargo llvm-cov clean --workspace",
-  "echo '=== default features ===' && cargo llvm-cov --no-report nextest --workspace",
-  "echo '=== --no-default-features ===' && cargo llvm-cov --no-report nextest --no-default-features",
-  "echo '=== --features experimental ===' && cargo llvm-cov --no-report nextest --features experimental",
+  "cargo hack --feature-powerset --workspace llvm-cov --no-report nextest",
   "cargo llvm-cov report --lcov --output-path target/lcov.info",
   "cargo llvm-cov report --html --output-dir target/coverage",
   "cargo llvm-cov report",
@@ -47,12 +46,12 @@ description = "Run all tests with cargo nextest"
 run = "cargo nextest run"
 
 [tasks.test-all-features]
-description = "Run tests across all feature combinations"
-run = [
-  "echo '=== default features ===' && cargo nextest run",
-  "echo '=== --no-default-features ===' && cargo nextest run --no-default-features",
-  "echo '=== --features experimental ===' && cargo nextest run --features experimental",
-]
+description = "Run tests across every feature combination"
+run = "cargo hack --feature-powerset --workspace nextest run"
+
+[tasks.clippy]
+description = "Lint every feature combination, warnings are errors"
+run = "cargo hack --feature-powerset --workspace clippy --all-targets -- -D warnings"
 
 [tasks.doc]
 description = "Build and open documentation"

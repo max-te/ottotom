@@ -232,7 +232,10 @@ fn test_make_f64_gauge_metric() {
         1
     );
     assert_eq!(
-        gauge.data_points().map(|dp| dp.value()).sum::<f64>(),
+        gauge
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -251,7 +254,10 @@ fn test_make_f64_gauge_metric_handle() {
     let gauge = metric.extract::<Gauge<f64>>().unwrap();
     assert_eq!(gauge.data_points().count(), values.len());
     assert_eq!(
-        gauge.data_points().map(|dp| dp.value()).sum::<f64>(),
+        gauge
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
     assert!(metric.extract::<Sum<f64>>().is_none());
@@ -287,7 +293,10 @@ fn test_make_u64_gauge_metric() {
         1
     );
     assert_eq!(
-        gauge.data_points().map(|dp| dp.value()).sum::<u64>(),
+        gauge
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -301,7 +310,10 @@ fn test_make_u64_gauge_metric_handle() {
     let gauge = metric.extract::<Gauge<u64>>().unwrap();
     assert_eq!(gauge.data_points().count(), values.len());
     assert_eq!(
-        gauge.data_points().map(|dp| dp.value()).sum::<u64>(),
+        gauge
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -336,7 +348,10 @@ fn test_make_i64_gauge_metric() {
         1
     );
     assert_eq!(
-        gauge.data_points().map(|dp| dp.value()).sum::<i64>(),
+        gauge
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+            .sum::<i64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -350,7 +365,10 @@ fn test_make_i64_gauge_metric_handle() {
     let gauge = metric.extract::<Gauge<i64>>().unwrap();
     assert_eq!(gauge.data_points().count(), values.len());
     assert_eq!(
-        gauge.data_points().map(|dp| dp.value()).sum::<i64>(),
+        gauge
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+            .sum::<i64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -385,7 +403,10 @@ fn test_make_u64_counter_metric() {
         1
     );
     assert_eq!(
-        counter.data_points().map(|dp| dp.value()).sum::<u64>(),
+        counter
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -399,7 +420,10 @@ fn test_make_u64_counter_metric_handle() {
     let counter = metric.extract::<Sum<u64>>().unwrap();
     assert_eq!(counter.data_points().count(), values.len());
     assert_eq!(
-        counter.data_points().map(|dp| dp.value()).sum::<u64>(),
+        counter
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -434,7 +458,10 @@ fn test_make_f64_counter_metric() {
         1
     );
     assert_eq!(
-        counter.data_points().map(|dp| dp.value()).sum::<f64>(),
+        counter
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -448,7 +475,10 @@ fn test_make_f64_counter_metric_handle() {
     let counter = metric.extract::<Sum<f64>>().unwrap();
     assert_eq!(counter.data_points().count(), values.len());
     assert_eq!(
-        counter.data_points().map(|dp| dp.value()).sum::<f64>(),
+        counter
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -483,7 +513,10 @@ fn test_make_i64_counter_metric() {
         1
     );
     assert_eq!(
-        counter.data_points().map(|dp| dp.value()).sum::<i64>(),
+        counter
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+            .sum::<i64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -498,7 +531,10 @@ fn test_make_i64_counter_metric_handle() {
     let counter = metric.extract::<Sum<i64>>().unwrap();
     assert_eq!(counter.data_points().count(), values.len());
     assert_eq!(
-        counter.data_points().map(|dp| dp.value()).sum::<i64>(),
+        counter
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+            .sum::<i64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -533,7 +569,10 @@ fn test_make_f64_histogram_metric() {
         1
     );
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<f64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::HistogramDataPoint::sum)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
     assert_eq!(
@@ -561,7 +600,10 @@ fn test_make_f64_histogram_metric_handle() {
     let histogram = metric.extract::<Histogram<f64>>().unwrap();
     assert_eq!(histogram.data_points().count(), values.len());
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<f64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::HistogramDataPoint::sum)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
     assert!(metric.extract::<Gauge<f64>>().is_none());
@@ -597,7 +639,10 @@ fn test_make_u64_histogram_metric() {
         1
     );
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<u64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::HistogramDataPoint::sum)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
     assert_eq!(
@@ -625,7 +670,10 @@ fn test_make_u64_histogram_metric_handle() {
     let histogram = metric.extract::<Histogram<u64>>().unwrap();
     assert_eq!(histogram.data_points().count(), values.len());
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<u64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::HistogramDataPoint::sum)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
@@ -675,11 +723,17 @@ fn test_make_f64_exponential_histogram_metric() {
         );
     }
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<f64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::ExponentialHistogramDataPoint::sum)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
     assert_eq!(
-        histogram.data_points().map(|dp| dp.count()).sum::<usize>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::ExponentialHistogramDataPoint::count)
+            .sum::<usize>(),
         values.len()
     );
 }
@@ -702,7 +756,10 @@ fn test_make_f64_exponential_histogram_metric_handle() {
     let histogram = metric.extract::<ExponentialHistogram<f64>>().unwrap();
     assert_eq!(histogram.data_points().count(), values.len());
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<f64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::ExponentialHistogramDataPoint::sum)
+            .sum::<f64>(),
         values.iter().map(|v| v.0).sum()
     );
     assert!(metric.extract::<Histogram<f64>>().is_none());
@@ -753,11 +810,17 @@ fn test_make_u64_exponential_histogram_metric() {
         );
     }
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<u64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::ExponentialHistogramDataPoint::sum)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
     assert_eq!(
-        histogram.data_points().map(|dp| dp.count()).sum::<usize>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::ExponentialHistogramDataPoint::count)
+            .sum::<usize>(),
         values.len()
     );
 }
@@ -776,7 +839,10 @@ fn test_make_u64_exponential_histogram_metric_handle() {
     let histogram = metric.extract::<ExponentialHistogram<u64>>().unwrap();
     assert_eq!(histogram.data_points().count(), values.len());
     assert_eq!(
-        histogram.data_points().map(|dp| dp.sum()).sum::<u64>(),
+        histogram
+            .data_points()
+            .map(opentelemetry_sdk::metrics::data::ExponentialHistogramDataPoint::sum)
+            .sum::<u64>(),
         values.iter().map(|v| v.0).sum()
     );
 }
