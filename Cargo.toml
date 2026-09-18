@@ -1,6 +1,6 @@
 [package]
 name = "ottotom"
-version = "0.33.0-alpha.2"
+version = "0.33.0-alpha.3"
 edition = "2024"
 # Bounded by the let-chain in `src/convert.rs`; 1.87 rejects it.
 rust-version = "1.88"
@@ -41,7 +41,7 @@ opentelemetry = { version = "0.33.0", default-features = false }
 opentelemetry_sdk = { version = "0.33.0", default-features = false, features = [
     "metrics",
 ] }
-ottotom-testsupport = { path = "testsupport", version = "=0.33.0-alpha.2" }
+ottotom-testsupport = { path = "testsupport", version = "=0.33.0-alpha.3" }
 
 [dependencies]
 opentelemetry.workspace = true

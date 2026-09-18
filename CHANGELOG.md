@@ -1,3 +1,27 @@
+## [0.33.0-alpha.3] - 2026-09-18
+
+### Breaking Changes
+
+- [`3ce3584`](https://github.com/max-te/ottotom/commit/3ce3584d9d747433b68e43a81b21ef04abb1c410) *(exporter)* **Return Arc<str> from text()** — `OpenMetricsExporter::text()` returns `Arc<str>` instead of `String`. `Display` and `str` methods work unchanged through the deref; callers that need an owned `String` can call `.to_string()`.
+- [`4f936c2`](https://github.com/max-te/ottotom/commit/4f936c29e633c2cd2c859d26f998f1f2b902e548) **Remove the fast feature** — The `fast` cargo feature is gone. Builds that named it explicitly should drop it; `default-features = false` builds now get `memchr` and `itoa` regardless.
+
+### Features
+
+- [`a3a12ab`](https://github.com/max-te/ottotom/commit/a3a12ab0d19263981de561eb94aa0c1efeff0086) *(deps)* Support opentelemetry 0.33
+- [`3ce3584`](https://github.com/max-te/ottotom/commit/3ce3584d9d747433b68e43a81b21ef04abb1c410) *(exporter)* [**breaking**] Return Arc<str> from text()
+
+### Bug Fixes
+
+- [`76b8c7c`](https://github.com/max-te/ottotom/commit/76b8c7c1f72de082a8e6553e0544a8c35d065da0) *(exporter)* Compile without the tracing feature
+- [`6d1d09c`](https://github.com/max-te/ottotom/commit/6d1d09c73d9cbae290ca870453c9688935a0d027) *(lint)* Drop the unused async from export
+
+### Documentation
+
+- [`e44555f`](https://github.com/max-te/ottotom/commit/e44555ff689c487a43175a69f5dad1f935241c3a) *(readme)* Document the versioning policy and cargo features
+
+### Other Changes
+
+- [`4f936c2`](https://github.com/max-te/ottotom/commit/4f936c29e633c2cd2c859d26f998f1f2b902e548) [**breaking**] Remove the fast feature
 ## [0.33.0-alpha.2] - 2026-08-20
 
 ### Features
