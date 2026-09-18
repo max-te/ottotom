@@ -1,3 +1,4 @@
+use std::future::{Future, ready};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -54,10 +55,9 @@ impl OpenMetricsExporter {
             |t| Arc::clone(&t),
         )
     }
-}
 
-impl PushMetricExporter for OpenMetricsExporter {
-    async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
+    /// Render `metrics` into the backbuffer and publish it to the frontbuffer.
+    fn render(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
         debug!("Exporting metrics");
         let mut backbuffer = self.backbuffer.lock().unwrap_or_else(|err| {
             error!("Backbuffer lock was poisoned: {err}");
@@ -81,6 +81,12 @@ impl PushMetricExporter for OpenMetricsExporter {
         *frontbuffer = rendered;
 
         Ok(())
+    }
+}
+
+impl PushMetricExporter for OpenMetricsExporter {
+    fn export(&self, metrics: &ResourceMetrics) -> impl Future<Output = OTelSdkResult> + Send {
+        ready(self.render(metrics))
     }
 
     fn force_flush(&self) -> OTelSdkResult {
