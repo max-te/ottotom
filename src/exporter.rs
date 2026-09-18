@@ -36,7 +36,7 @@ impl OpenMetricsExporter {
     pub fn text(&self) -> String {
         self.buffer.read().map_or_else(
             |err| {
-                tracing::error!("Frontbuffer lock was poisoned: {err}");
+                error!("Frontbuffer lock was poisoned: {err}");
                 // the frontbuffer-backbuffer swap should make sure we never see a corrupted buffer
                 err.into_inner().as_str().to_owned()
             },
@@ -47,10 +47,9 @@ impl OpenMetricsExporter {
 
 impl PushMetricExporter for OpenMetricsExporter {
     async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Exporting metrics");
+        debug!("Exporting metrics");
         let mut backbuffer = self.backbuffer.lock().unwrap_or_else(|err| {
-            tracing::error!("Backbuffer lock was poisoned: {err}");
+            error!("Backbuffer lock was poisoned: {err}");
             self.backbuffer.clear_poison();
             err.into_inner()
         });
@@ -62,7 +61,7 @@ impl PushMetricExporter for OpenMetricsExporter {
             })?;
 
         let mut frontbuffer = self.buffer.write().unwrap_or_else(|err| {
-            tracing::error!("Frontbuffer lock was poisoned: {err}");
+            error!("Frontbuffer lock was poisoned: {err}");
             self.buffer.clear_poison();
             err.into_inner()
         });

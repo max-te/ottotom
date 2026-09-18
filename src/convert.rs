@@ -198,9 +198,8 @@ impl WriteOpenMetrics for ResourceMetrics {
                     write_header(&mut ctx, metric.description())?;
                     write_values(&mut ctx, metric.data())?;
                 } else {
-                    #[cfg(feature = "tracing")]
                     // c[impl metadata.drop-warn]
-                    tracing::warn!("Unsupported metric type {metric:?}");
+                    warn!("Unsupported metric type {metric:?}");
                 }
             }
         }

@@ -1,5 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+#[macro_use]
+mod log;
+
 /// Implementation of the OpenMetrics text format conversion.
 pub mod convert;
 /// Contains the main interface of this crate, [`exporter::OpenMetricsExporter`].
