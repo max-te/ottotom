@@ -21,8 +21,8 @@ ottotom-testsupport = { path = "testsupport", version = "=0.33.0-alpha.2" }
 [dependencies]
 opentelemetry.workspace = true
 opentelemetry_sdk.workspace = true
-memchr = { version = "2.7.6", optional = true }
-itoa = { version = "1.0.15", optional = true }
+memchr = "2.7.6"
+itoa = "1.0.15"
 ryu = { version = "1.0.20" }
 tracing = { version = "0.1.41", optional = true }
 ufmt = { version = "0.2.0", features = ["std"] }
@@ -31,8 +31,7 @@ ufmt = { version = "0.2.0", features = ["std"] }
 exporter = []
 tracing = ["dep:tracing"]
 experimental = []
-fast = ["dep:itoa", "dep:memchr"]
-default = ["tracing", "exporter", "fast"]
+default = ["tracing", "exporter"]
 
 [dev-dependencies]
 ottotom-testsupport.workspace = true

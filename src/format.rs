@@ -99,119 +99,62 @@ mod test_float_format {
     }
 }
 
-#[cfg(feature = "fast")]
-mod fast_impl_with {
-    use ufmt::uDisplay;
+#[derive(Copy, Clone)]
+struct ItoaDisplay<N: itoa::Integer>(N);
 
-    use super::Numeric;
-    #[derive(Copy, Clone)]
-    struct ItoaDisplay<N: itoa::Integer>(N);
-
-    impl<N: itoa::Integer> uDisplay for ItoaDisplay<N> {
-        fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
-        where
-            W: ufmt::uWrite + ?Sized,
-        {
-            let mut buffer = itoa::Buffer::new();
-            let formatted = buffer.format(self.0);
-            f.write_str(formatted)
-        }
-    }
-
-    // om[impl numbers.integer]
-    impl Numeric for u64 {
-        #[inline]
-        fn fast_display(&self) -> impl uDisplay + Copy + use<> {
-            ItoaDisplay(*self)
-        }
-
-        #[inline]
-        fn is_unsigned() -> bool {
-            true
-        }
-
-        #[inline]
-        fn is_nonnegative(&self) -> bool {
-            true
-        }
-
-        #[inline]
-        fn to_f64(&self) -> f64 {
-            *self as f64
-        }
-    }
-
-    // om[impl numbers.integer]
-    impl Numeric for i64 {
-        #[inline]
-        fn fast_display(&self) -> impl uDisplay + Copy + use<> {
-            ItoaDisplay(*self)
-        }
-
-        #[inline]
-        fn is_unsigned() -> bool {
-            false
-        }
-
-        #[inline]
-        fn is_nonnegative(&self) -> bool {
-            !self.is_negative()
-        }
-
-        #[inline]
-        fn to_f64(&self) -> f64 {
-            *self as f64
-        }
+impl<N: itoa::Integer> uDisplay for ItoaDisplay<N> {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        let mut buffer = itoa::Buffer::new();
+        let formatted = buffer.format(self.0);
+        f.write_str(formatted)
     }
 }
-#[cfg(not(feature = "fast"))]
-mod fast_impl_without {
-    use super::Numeric;
-    use ufmt::uDisplay;
 
-    // om[impl numbers.integer]
-    impl Numeric for u64 {
-        #[inline]
-        fn fast_display(&self) -> impl uDisplay + Copy + use<> {
-            *self
-        }
-
-        #[inline]
-        fn is_unsigned() -> bool {
-            true
-        }
-
-        #[inline]
-        fn is_nonnegative(&self) -> bool {
-            true
-        }
-
-        #[inline]
-        fn to_f64(&self) -> f64 {
-            *self as f64
-        }
+// om[impl numbers.integer]
+impl Numeric for u64 {
+    #[inline]
+    fn fast_display(&self) -> impl uDisplay + Copy + use<> {
+        ItoaDisplay(*self)
     }
 
-    // om[impl numbers.integer]
-    impl Numeric for i64 {
-        #[inline]
-        fn fast_display(&self) -> impl uDisplay + Copy + use<> {
-            *self
-        }
+    #[inline]
+    fn is_unsigned() -> bool {
+        true
+    }
 
-        #[inline]
-        fn is_unsigned() -> bool {
-            false
-        }
+    #[inline]
+    fn is_nonnegative(&self) -> bool {
+        true
+    }
 
-        #[inline]
-        fn is_nonnegative(&self) -> bool {
-            !self.is_negative()
-        }
+    #[inline]
+    fn to_f64(&self) -> f64 {
+        *self as f64
+    }
+}
 
-        #[inline]
-        fn to_f64(&self) -> f64 {
-            *self as f64
-        }
+// om[impl numbers.integer]
+impl Numeric for i64 {
+    #[inline]
+    fn fast_display(&self) -> impl uDisplay + Copy + use<> {
+        ItoaDisplay(*self)
+    }
+
+    #[inline]
+    fn is_unsigned() -> bool {
+        false
+    }
+
+    #[inline]
+    fn is_nonnegative(&self) -> bool {
+        !self.is_negative()
+    }
+
+    #[inline]
+    fn to_f64(&self) -> f64 {
+        *self as f64
     }
 }

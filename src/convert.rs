@@ -696,12 +696,7 @@ fn hash_attrs<'a, I: Iterator<Item = &'a KeyValue>>(attrs: I) -> u64 {
 fn write_escaped<U: uWrite>(f: &mut U, value: &str) -> Result<(), U::Error> {
     #[inline]
     fn next_escape_char(bytes: &[u8]) -> Option<usize> {
-        #[cfg(feature = "fast")]
-        return memchr::memchr3(b'\\', b'"', b'\n', bytes);
-        #[cfg(not(feature = "fast"))]
-        bytes
-            .iter()
-            .position(|&byte| byte == b'\\' || byte == b'"' || byte == b'\n')
+        memchr::memchr3(b'\\', b'"', b'\n', bytes)
     }
 
     let mut bytes = value.as_bytes();
