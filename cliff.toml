@@ -63,6 +63,7 @@ commit_parsers = [
     { message = "^test", skip = true },
     { message = "^tests", skip = true },
     { message = "^style", skip = true },
+    { message = "^Merge", skip = true },
 
     # Catch freeform commits that didn't use a prefix.
     { message = ".*", group = "<!-- 4 -->Other" },
