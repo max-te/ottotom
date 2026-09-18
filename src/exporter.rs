@@ -1,7 +1,8 @@
 use std::future::{Future, ready};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
@@ -14,7 +15,7 @@ use crate::convert::{Config, WriteOpenMetrics};
 pub struct OpenMetricsExporter {
     /// The most recent complete rendering. Replaced wholesale by [`Self::export`],
     /// so readers hand out a shared handle instead of copying the text.
-    buffer: Arc<RwLock<Arc<str>>>,
+    buffer: Arc<ArcSwap<String>>,
     /// Scratch space for the in-progress rendering, kept between exports to reuse its capacity.
     backbuffer: Arc<Mutex<String>>,
     config: Config,
@@ -31,7 +32,7 @@ impl OpenMetricsExporter {
     #[must_use]
     pub fn new(config: Config) -> Self {
         Self {
-            buffer: Arc::new(RwLock::new(Arc::from(""))),
+            buffer: Arc::new(ArcSwap::from_pointee(String::new())),
             backbuffer: Arc::new(Mutex::new(String::new())),
             config,
         }
@@ -43,17 +44,8 @@ impl OpenMetricsExporter {
     /// [`PushMetricExporter::export`] produced, and a later export leaves it
     /// untouched. An exporter that has not exported yet yields an empty string.
     #[must_use]
-    pub fn text(&self) -> Arc<str> {
-        self.buffer.read().map_or_else(
-            |err| {
-                error!("Frontbuffer lock was poisoned: {err}");
-                // The frontbuffer only ever holds a finished rendering — it is
-                // replaced by a single store — so a poisoned lock cannot expose
-                // half-written text.
-                Arc::clone(&err.into_inner())
-            },
-            |t| Arc::clone(&t),
-        )
+    pub fn text(&self) -> Arc<String> {
+        self.buffer.load_full()
     }
 
     /// Render `metrics` into the backbuffer and publish it to the frontbuffer.
@@ -70,15 +62,10 @@ impl OpenMetricsExporter {
             .map_err(|err| {
                 OTelSdkError::InternalFailure(format!("Failed to write to buffer: {err}"))
             })?;
-        let rendered: Arc<str> = Arc::from(backbuffer.as_str());
+        let rendered = backbuffer.clone();
         drop(backbuffer);
 
-        let mut frontbuffer = self.buffer.write().unwrap_or_else(|err| {
-            error!("Frontbuffer lock was poisoned: {err}");
-            self.buffer.clear_poison();
-            err.into_inner()
-        });
-        *frontbuffer = rendered;
+        self.buffer.store(Arc::new(rendered));
 
         Ok(())
     }

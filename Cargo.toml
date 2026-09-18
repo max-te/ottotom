@@ -51,9 +51,10 @@ itoa = "1.0.15"
 ryu = { version = "1.0.20" }
 tracing = { version = "0.1.41", optional = true }
 ufmt = { version = "0.2.0", features = ["std"] }
+arc-swap = { version = "1.9.2", optional = true }
 
 [features]
-exporter = []
+exporter = ["dep:arc-swap"]
 tracing = ["dep:tracing"]
 experimental = []
 default = ["tracing", "exporter"]
