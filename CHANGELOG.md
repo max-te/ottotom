@@ -1,3 +1,12 @@
+## [0.33.0] - 2026-09-18
+
+### Breaking Changes
+
+- [`c15d8b0`](https://github.com/max-te/ottotom/commit/c15d8b0fe3ada3ffc2178932dd1730c585576971) *(exporter)* **Lock-free frontbuffer swap** — `OpenMetricsExporter::text()` returns `Arc<String>`. This is an erratum to the v0.33.0-alpha.3 note announcing `Arc<str>`.
+
+### Other Changes
+
+- [`c15d8b0`](https://github.com/max-te/ottotom/commit/c15d8b0fe3ada3ffc2178932dd1730c585576971) *(exporter)* [**breaking**] Lock-free frontbuffer swap
 ## [0.33.0-alpha.3] - 2026-09-18
 
 ### Breaking Changes
@@ -32,12 +41,6 @@
 
 - [`78b1cfd`](https://github.com/max-te/ottotom/commit/78b1cfd6baab6cdea36dccecb5efe168d551e7d5) Publish whole workspace in publish task
 - [`72e8289`](https://github.com/max-te/ottotom/commit/72e82892022fb7a7ce8496fbee0e0c6ba6381e6a) *(ci)* Skip doctests on --no-default-features
-
-### Other
-
-- [`826a607`](https://github.com/max-te/ottotom/commit/826a607334624e343d50483a6372caa54d5942e2) Merge pull request #1 from max-te/dependabot/github_actions/actions/checkout-7
-
-chore(deps): bump actions/checkout from 6 to 7
 ## [0.33.0-alpha.1] - 2026-08-03
 
 ### Features
