@@ -9,7 +9,7 @@ fn exporter_exports() {
         .with_periodic_exporter(exporter.clone())
         .build();
     let initial_text = exporter.text();
-    assert_eq!(initial_text, String::new());
+    assert_eq!(&*initial_text, "");
 
     let meter = meter_provider.meter("meter.one");
     let gauge = meter.f64_gauge("a_gauge").build();
