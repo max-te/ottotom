@@ -234,7 +234,7 @@ the lexicographical order of the original keys.
 
 ## Exemplars
 
-> Exemplar conversion is implemented, but `opentelemetry_sdk` (0.32.x, the
+> Exemplar conversion is implemented, but `opentelemetry_sdk` (0.33.x, the
 > pinned version) never populates exemplars: its aggregators hardcode empty
 > exemplar vectors and there is no exemplar reservoir, so the code below is
 > currently unreachable. It becomes live when the SDK starts producing
