@@ -2,6 +2,7 @@
 name = "ottotom-testsupport"
 version = "0.33.0-alpha.2"
 edition = "2024"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/max-te/ottotom"
 description = "Test helpers used for the ottotom crate tests"
