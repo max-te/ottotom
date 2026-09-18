@@ -16,17 +16,17 @@ use ufmt::uwrite;
 use super::*;
 
 fn strip_otel_scope_name(s: &str) -> String {
-    let mut result = s.to_owned();
-
     const OTEL_SCOPE_NAME: &str = "otel_scope_name=\"myscope\"";
+
+    let mut result = s.to_owned();
     while let Some(start) = result.find(OTEL_SCOPE_NAME) {
         result.replace_range(start..start + OTEL_SCOPE_NAME.len(), "");
         if result.as_bytes()[start - 1..start] == *b"," {
             // Had preceding attributes
             result.replace_range(start - 1..start, "");
-        } else if result.as_bytes()[start..start + 1] == *b"," {
+        } else if result.as_bytes()[start..=start] == *b"," {
             // Was first attribute with trailing attributes
-            result.replace_range(start..start + 1, "");
+            result.replace_range(start..=start, "");
         }
     }
 
@@ -303,13 +303,13 @@ fn test_write_attrs_stringify() {
 // c[verify scope.name-version] - scope name and version become info attributes
 fn test_make_scope_name_attrs() {
     let scope_name = "test_scope";
-    let attrs = make_scope_name_attrs(&Config::default(), scope_name, None);
+    let attrs = make_scope_name_attrs(Config::default(), scope_name, None);
     assert_eq!(attrs.len(), 1);
     assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
     assert_eq!(attrs[0].value.as_str(), "test_scope");
 
     let scope_version = "1.2.3";
-    let attrs = make_scope_name_attrs(&Config::default(), scope_name, Some(scope_version));
+    let attrs = make_scope_name_attrs(Config::default(), scope_name, Some(scope_version));
     assert_eq!(attrs.len(), 2);
     assert_eq!(attrs[0].key.as_str(), "otel_scope_name");
     assert_eq!(attrs[0].value.as_str(), "test_scope");
@@ -317,9 +317,9 @@ fn test_make_scope_name_attrs() {
     assert_eq!(attrs[1].value.as_str(), "1.2.3");
 
     let disabled = Config::builder().scope_info_enabled(false).build();
-    let attrs = make_scope_name_attrs(&disabled, scope_name, None);
+    let attrs = make_scope_name_attrs(disabled, scope_name, None);
     assert!(attrs.is_empty());
-    let attrs = make_scope_name_attrs(&disabled, scope_name, Some(scope_version));
+    let attrs = make_scope_name_attrs(disabled, scope_name, Some(scope_version));
     assert!(attrs.is_empty());
 }
 
@@ -329,7 +329,7 @@ fn test_to_timestamp() {
     use std::time::{Duration, UNIX_EPOCH};
 
     // Test with a known timestamp
-    let time = UNIX_EPOCH + Duration::from_secs(1625097600);
+    let time = UNIX_EPOCH + Duration::from_secs(1_625_097_600);
     let timestamp = to_timestamp(time);
     let mut output = String::new();
     uwrite!(output, "{}", timestamp).unwrap();
@@ -342,7 +342,7 @@ fn test_write_otel_scope_info() {
     let scopes: Vec<&ScopeMetrics> = resource_metrics.scope_metrics().collect();
 
     let mut output = String::new();
-    write_otel_scope_info(&mut output, &scopes, &Config::default()).unwrap();
+    write_otel_scope_info(&mut output, &scopes, Config::default()).unwrap();
 
     // c[verify scope.info]
     assert!(output.contains("# TYPE otel_scope info"));
@@ -368,8 +368,7 @@ fn test_get_type() {
             let type_str = result.unwrap();
             assert!(
                 type_str == "gauge" || type_str == "counter" || type_str == "histogram",
-                "Unexpected metric type: {}",
-                type_str
+                "Unexpected metric type: {type_str}"
             );
         }
     }
@@ -454,6 +453,9 @@ fn test_write_counter() {
     );
 }
 
+// The workspace denies `unsafe_code`; this one test helper needs it to build an
+// `Exemplar`, which the SDK exposes no constructor for. See the SAFETY note below.
+#[allow(unsafe_code)]
 fn exemplar_from_parts<T>(
     value: T,
     time: SystemTime,
@@ -509,7 +511,7 @@ fn exemplar_from_parts<T>(
             span_id,
             trace_id,
         };
-        let exemplar = std::ptr::read(&raw as *const RawExemplar<T> as *const Exemplar<T>);
+        let exemplar = std::ptr::read((&raw const raw).cast::<Exemplar<T>>());
         std::mem::forget(raw);
         exemplar
     }

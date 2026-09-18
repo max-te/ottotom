@@ -159,7 +159,7 @@ pub fn make_large_test_metrics() -> ResourceMetrics {
     let hist = meter.f64_histogram("histo").build();
     for i in 0..1000 {
         hist.record(
-            4.22 / i as f64,
+            4.22 / f64::from(i),
             &[
                 KeyValue::new("x.y.z", format!("v{i}")),
                 KeyValue::new("z.z.z", "fixed"),

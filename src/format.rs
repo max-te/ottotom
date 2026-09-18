@@ -63,21 +63,21 @@ mod test_float_format {
     fn has_decimal_point() {
         let mut s = String::new();
         uwrite!(s, "{}", 5.0f64.fast_display()).unwrap();
-        assert_eq!(s, "5.0")
+        assert_eq!(s, "5.0");
     }
 
     #[test]
     fn has_decimals() {
         let mut s = String::new();
         uwrite!(s, "{}", 0.12345f64.fast_display()).unwrap();
-        assert_eq!(s, "0.12345")
+        assert_eq!(s, "0.12345");
     }
 
     #[test]
     fn has_scientific_notation() {
         let mut s = String::new();
-        uwrite!(s, "{}", 0.000000000012f64.fast_display()).unwrap();
-        assert_eq!(s, "1.2e-11")
+        uwrite!(s, "{}", 0.000_000_000_012_f64.fast_display()).unwrap();
+        assert_eq!(s, "1.2e-11");
     }
 
     #[test]
@@ -88,7 +88,7 @@ mod test_float_format {
         assert_eq!(s, "+Inf");
         s.clear();
         uwrite!(s, "{}", f64::NEG_INFINITY.fast_display()).unwrap();
-        assert_eq!(s, "-Inf")
+        assert_eq!(s, "-Inf");
     }
 
     #[test]

@@ -15,6 +15,27 @@ description = "Conversion of OpenTelemetry metrics to OpenMetrics Text format"
 resolver = "3"
 members = ["testsupport"]
 
+[workspace.lints.rust]
+# `deny`, not `forbid`: the benchmark installs a custom global allocator and
+# opts out locally.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# The `_ => unimplemented!()` arms in `write_values` are deliberate: they are
+# what keeps a new `MetricData` variant in the SDK from being a compile error.
+match_wildcard_for_single_variants = "allow"
+# Metric values are compared against histogram bucket bounds, which the SDK
+# stores as `f64`; the widening and the exact comparison are both intended.
+cast_precision_loss = "allow"
+float_cmp = "allow"
+# `write_histogram` is one long straight-line writer; splitting it would spread
+# the hot path over several functions for no gain.
+too_many_lines = "allow"
+
+[lints]
+workspace = true
+
 [workspace.dependencies]
 opentelemetry = { version = "0.33.0", default-features = false }
 opentelemetry_sdk = { version = "0.33.0", default-features = false, features = [

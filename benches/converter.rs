@@ -1,3 +1,10 @@
+//! Benchmarks for the OpenMetrics conversion.
+//!
+//! Installs a global allocator that never grows an allocation in place, so that
+//! buffer-growth costs show up in the measurements instead of hiding behind
+//! `realloc`. That needs `unsafe`, which the workspace otherwise denies.
+#![allow(unsafe_code, clippy::missing_panics_doc)]
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::rc::Rc;
@@ -12,6 +19,7 @@ use tango_bench::{Benchmark, IntoBenchmarks, benchmark_fn, tango_benchmarks, tan
 /// Number of distinct attribute sets used by the scaling benchmarks.
 const POINT_COUNTS: [usize; 3] = [16, 256, 2048];
 
+#[must_use]
 pub fn benchmarks() -> impl IntoBenchmarks {
     let mut all = vec![
         // Full conversion of a small, mixed set of metrics into a fresh String.

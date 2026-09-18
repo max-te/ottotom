@@ -1,0 +1,3 @@
+# Proper nouns that `clippy::doc_markdown` would otherwise want in backticks.
+# They are specification and product names in prose, not code identifiers.
+doc-valid-idents = ["OpenMetrics", "OpenTelemetry", "OpenMetrics-compliant", "CodSpeed", ".."]

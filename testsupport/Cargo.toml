@@ -12,3 +12,6 @@ opentelemetry.workspace = true
 opentelemetry_sdk = { workspace = true, features = [
     "experimental_metrics_custom_reader",
 ] }
+
+[lints]
+workspace = true

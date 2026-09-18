@@ -26,7 +26,7 @@ impl TestMeter {
     /// Configures the provider with a view that converts histogram instruments
     /// to the Base2 exponential histogram aggregation.
     ///
-    /// See https://github.com/open-telemetry/opentelemetry-rust/issues/2111#issuecomment-3488799894
+    /// See <https://github.com/open-telemetry/opentelemetry-rust/issues/2111#issuecomment-3488799894>
     fn new_exponential_histogram() -> Self {
         Self::new_with(SdkMeterProvider::builder().with_view(|inst| {
             if let InstrumentKind::Histogram = inst.kind() {
