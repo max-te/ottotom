@@ -84,6 +84,8 @@ impl PushMetricExporter for OpenMetricsExporter {
         Ok(())
     }
 
+    // `Cumulative` is also the SDK's default; the mutant is equivalent.
+    #[cfg_attr(test, mutants::skip)]
     fn temporality(&self) -> Temporality {
         Temporality::Cumulative
     }

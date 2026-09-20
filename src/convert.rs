@@ -32,6 +32,8 @@ pub struct Config {
 impl Config {
     /// Returns a builder for the conversion configuration.
     #[must_use]
+    // The body already is `Default::default()`; the mutant is equivalent.
+    #[cfg_attr(test, mutants::skip)]
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::default()
     }

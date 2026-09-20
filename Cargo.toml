@@ -64,6 +64,7 @@ ottotom-testsupport.workspace = true
 openmetrics-parser = "0.4.4"
 tango-bench = "0.7"
 insta = { version = "1.43.2" }
+mutants = "0.0.4"
 divan = { version = "5.0.1", package = "codspeed-divan-compat" }
 
 [[bench]]

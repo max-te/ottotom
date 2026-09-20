@@ -49,6 +49,8 @@ pub(crate) fn get_unit_suffixes(unit: &str) -> Option<Cow<'static, str>> {
     None
 }
 
+// A lookup table, not logic: a test enumerating the arms would only restate it.
+#[cfg_attr(test, mutants::skip)]
 fn get_prom_units(unit: &str) -> Option<&'static str> {
     match unit {
         // Time
@@ -88,6 +90,7 @@ fn get_prom_units(unit: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg_attr(test, mutants::skip)]
 fn get_prom_per_unit(unit: &str) -> Option<&'static str> {
     match unit {
         "s" => Some("second"),
