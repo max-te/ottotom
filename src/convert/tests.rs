@@ -576,6 +576,27 @@ fn test_exemplar_roundtrip() {
 }
 
 #[test]
+// c[verify histogram.sum] - a histogram that saw a negative observation has no
+// monotonic sum, so `_sum` is omitted.
+fn test_write_histogram_omits_sum_when_not_monotonic() {
+    let negative = make_f64_histogram_metric(vec![(-1.0, vec![])]);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &negative).unwrap();
+    assert!(!output.contains("_sum"), "{output}");
+
+    let nonnegative = make_f64_histogram_metric(vec![(1.0, vec![])]);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &nonnegative).unwrap();
+    assert!(output.contains("_sum"), "{output}");
+
+    // Unsigned values need no such check; their sum is monotonic by type.
+    let unsigned = make_u64_histogram_metric(vec![(1, vec![])]);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &unsigned).unwrap();
+    assert!(output.contains("_sum"), "{output}");
+}
+
+#[test]
 // om[verify exemplars.bucket-attachment]
 // c[verify histogram.bucket.exemplar]
 fn test_falls_in_bucket() {
