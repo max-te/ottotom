@@ -453,67 +453,47 @@ fn test_write_counter() {
     );
 }
 
-// The workspace denies `unsafe_code`; this one test helper needs it to build an
-// `Exemplar`, which the SDK exposes no constructor for. See the SAFETY note below.
-#[allow(unsafe_code)]
-fn exemplar_from_parts<T>(
+/// A stand-in for the SDK's [`Exemplar`], which has no public constructor.
+struct TestExemplar<T> {
     value: T,
     time: SystemTime,
     filtered_attributes: Vec<KeyValue>,
     span_id: [u8; 8],
     trace_id: [u8; 16],
-) -> Exemplar<T> {
-    /// Mirror of [`Exemplar`]'s fields for constructing exemplars in tests.
-    ///
-    /// The fields are never read: the struct only exists to lay the bytes out
-    /// identically to `Exemplar` before they are reinterpreted.
-    #[expect(dead_code)]
-    struct RawExemplar<T> {
-        filtered_attributes: Vec<KeyValue>,
-        time: SystemTime,
-        value: T,
-        span_id: [u8; 8],
-        trace_id: [u8; 16],
+}
+
+impl<T: Numeric + Copy> ExemplarPoint for TestExemplar<T> {
+    type Value = T;
+
+    fn value(&self) -> T {
+        self.value
     }
 
-    // `exemplar_from_parts` reinterprets `RawExemplar`'s bytes as an `Exemplar`, so
-    // the layouts must match. `Exemplar`'s fields are `pub(crate)`, so size and
-    // alignment are the strongest cross-crate checks available; these fail to
-    // compile if the SDK's `Exemplar` changes size or alignment.
-    const _: () =
-        assert!(std::mem::size_of::<RawExemplar<f64>>() == std::mem::size_of::<Exemplar<f64>>());
-    const _: () =
-        assert!(std::mem::align_of::<RawExemplar<f64>>() == std::mem::align_of::<Exemplar<f64>>());
-    const _: () =
-        assert!(std::mem::size_of::<RawExemplar<u64>>() == std::mem::size_of::<Exemplar<u64>>());
-    const _: () =
-        assert!(std::mem::align_of::<RawExemplar<u64>>() == std::mem::align_of::<Exemplar<u64>>());
-    const _: () =
-        assert!(std::mem::size_of::<RawExemplar<i64>>() == std::mem::size_of::<Exemplar<i64>>());
-    const _: () =
-        assert!(std::mem::align_of::<RawExemplar<i64>>() == std::mem::align_of::<Exemplar<i64>>());
+    fn time(&self) -> SystemTime {
+        self.time
+    }
 
-    // SAFETY: `RawExemplar` mirrors `Exemplar`'s fields, types, and order (see
-    // `opentelemetry_sdk::metrics::data::Exemplar`), so the layouts are
-    // identical and reading the mirror's bytes as an `Exemplar` is sound.
-    // `mem::forget` keeps the mirror from dropping the `Vec` now owned by the
-    // returned `Exemplar`.
-    //
-    // `Exemplar` has no public constructor, so this builds a mirror struct with
-    // the same fields, types, and order as `Exemplar<T>` and reinterprets its
-    // bytes. The compile-time size/alignment assertions above and the
-    // `test_exemplar_roundtrip` test below verify the layouts stay in sync.
-    unsafe {
-        let raw = RawExemplar {
-            filtered_attributes,
-            time,
-            value,
-            span_id,
-            trace_id,
-        };
-        let exemplar = std::ptr::read((&raw const raw).cast::<Exemplar<T>>());
-        std::mem::forget(raw);
-        exemplar
+    fn trace_id(&self) -> [u8; 16] {
+        self.trace_id
+    }
+
+    fn span_id(&self) -> [u8; 8] {
+        self.span_id
+    }
+
+    fn filtered_attributes(&self) -> impl Iterator<Item = &KeyValue> {
+        self.filtered_attributes.iter()
+    }
+}
+
+/// An exemplar carrying nothing but a value, recorded `millis` after the epoch.
+fn bare_exemplar<T>(value: T, millis: u64) -> TestExemplar<T> {
+    TestExemplar {
+        value,
+        time: UNIX_EPOCH + Duration::from_millis(millis),
+        filtered_attributes: vec![],
+        span_id: [0; 8],
+        trace_id: [0; 16],
     }
 }
 
@@ -524,16 +504,16 @@ fn exemplar_from_parts<T>(
 // c[verify exemplar.filtered-attrs]
 // c[verify exemplar.timestamp]
 fn test_write_exemplar() {
-    let exemplar = exemplar_from_parts(
-        0.67,
-        UNIX_EPOCH + Duration::from_millis(123_456),
-        vec![KeyValue::new("filtered", "yes")],
-        [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe],
-        [
+    let exemplar = TestExemplar {
+        value: 0.67,
+        time: UNIX_EPOCH + Duration::from_millis(123_456),
+        filtered_attributes: vec![KeyValue::new("filtered", "yes")],
+        span_id: [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe],
+        trace_id: [
             0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab,
             0xcd, 0xef,
         ],
-    );
+    };
     let mut output = String::new();
     write_exemplar(&mut output, std::iter::once(&exemplar)).unwrap();
     assert_eq!(
@@ -542,37 +522,36 @@ fn test_write_exemplar() {
     );
 
     // Zeroed ids and no filtered attributes render as an empty label set.
-    let bare = exemplar_from_parts::<f64>(1.0, UNIX_EPOCH, vec![], [0; 8], [0; 16]);
     let mut output = String::new();
-    write_exemplar(&mut output, std::iter::once(&bare)).unwrap();
+    write_exemplar(&mut output, std::iter::once(&bare_exemplar(1.0, 0))).unwrap();
     assert_eq!(output, " # {} 1.0 0.0");
 }
 
 #[test]
-// Verifies every field survives the byte reinterpretation in
-// `exemplar_from_parts` unchanged, catching field reordering or resizing in
-// `opentelemetry_sdk`'s `Exemplar` that the size/alignment assertions above
-// cannot.
-fn test_exemplar_roundtrip() {
-    let filtered = vec![KeyValue::new("filtered", "yes")];
-    // Obvious test data: span_id `0xdeadbeefcafebabe`, trace_id
-    // `0x1234567890abcdef1234567890abcdef`.
-    let span_id = [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe];
-    let trace_id = [
-        0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd,
-        0xef,
+// om[verify exemplars.bucket-attachment]
+// c[verify exemplar.bucket-single] - one exemplar per bucket, the latest
+fn test_write_bucket_exemplar() {
+    const BOUNDS: [f64; 3] = [1.0, 2.0, 3.0];
+    let exemplars = [
+        bare_exemplar(0.5, 1),
+        bare_exemplar(1.0, 2),
+        bare_exemplar(2.5, 3),
+        bare_exemplar(9.0, 4),
     ];
-    let time = UNIX_EPOCH + Duration::from_millis(123_456);
-    let exemplar = exemplar_from_parts(0.67, time, filtered.clone(), span_id, trace_id);
 
-    assert_eq!(exemplar.value, 0.67);
-    assert_eq!(exemplar.time(), time);
-    assert_eq!(*exemplar.trace_id(), trace_id);
-    assert_eq!(*exemplar.span_id(), span_id);
-    assert_eq!(
-        exemplar.filtered_attributes().collect::<Vec<_>>(),
-        filtered.iter().collect::<Vec<_>>()
-    );
+    let render = |bucket| {
+        let mut output = String::new();
+        write_bucket_exemplar(&mut output, &BOUNDS, bucket, &exemplars).unwrap();
+        output
+    };
+
+    // Both 0.5 and 1.0 fall in the first bucket; the later one wins.
+    assert_eq!(render(0), " # {} 1.0 0.002");
+    // Nothing lies in (1, 2].
+    assert_eq!(render(1), "");
+    assert_eq!(render(2), " # {} 2.5 0.003");
+    // The index past the last bound is the +Inf bucket.
+    assert_eq!(render(3), " # {} 9.0 0.004");
 }
 
 #[test]

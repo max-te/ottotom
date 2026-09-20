@@ -427,6 +427,21 @@ fn falls_in_bucket<T: Numeric>(bounds: &[f64], i: usize, value: &T) -> bool {
     value > lower && value <= upper
 }
 
+/// Writes the exemplar attached to the `i`-th bucket of `bounds`, if any.
+fn write_bucket_exemplar<'a, E: ExemplarPoint + 'a, U: uWrite>(
+    f: &mut U,
+    bounds: &[f64],
+    i: usize,
+    exemplars: impl IntoIterator<Item = &'a E>,
+) -> Result<(), U::Error> {
+    write_exemplar(
+        f,
+        exemplars
+            .into_iter()
+            .filter(|e| falls_in_bucket(bounds, i, &e.value())),
+    )
+}
+
 fn write_histogram<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     histogram: &Histogram<T>,
@@ -533,12 +548,7 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             // c[impl exemplar.bucket-single]
             // c[impl histogram.bucket.exemplar] - a single exemplar per `le`
             // bucket, attached to no other `le`-labelled point
-            write_exemplar(
-                &mut ctx.f,
-                point
-                    .exemplars()
-                    .filter(|e| falls_in_bucket(&bounds, i, &e.value)),
-            )?;
+            write_bucket_exemplar(&mut ctx.f, &bounds, i, point.exemplars())?;
             ctx.f.write_char('\n')?;
         }
         // om[impl histogram.inf-bucket]
@@ -552,12 +562,7 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             ts,
         )?;
         // Exemplars above the last finite bound belong to the +Inf bucket.
-        write_exemplar(
-            &mut ctx.f,
-            point
-                .exemplars()
-                .filter(|e| falls_in_bucket(&bounds, bounds.len(), &e.value)),
-        )?;
+        write_bucket_exemplar(&mut ctx.f, &bounds, bounds.len(), point.exemplars())?;
         ctx.f.write_char('\n')?;
     }
     Ok(())
@@ -798,9 +803,50 @@ fn to_timestamp(time: SystemTime) -> impl uDisplay {
     ts.fast_display()
 }
 
-fn write_exemplar<'a, T: Numeric + Copy + 'a, U: uWrite>(
+/// The parts of an exemplar that the OpenMetrics encoding reads.
+///
+/// The SDK's [`Exemplar`] has no public constructor, so this is what lets a
+/// test supply one of its own.
+pub(crate) trait ExemplarPoint {
+    type Value: Numeric + Copy;
+
+    fn value(&self) -> Self::Value;
+    fn time(&self) -> SystemTime;
+    fn trace_id(&self) -> [u8; 16];
+    fn span_id(&self) -> [u8; 8];
+    fn filtered_attributes(&self) -> impl Iterator<Item = &KeyValue>;
+}
+
+// Plain forwarding, reachable only through exemplars the SDK produces - and
+// this SDK produces none, leaving every mutant here unkillable.
+#[cfg_attr(test, mutants::skip)]
+impl<T: Numeric + Copy> ExemplarPoint for Exemplar<T> {
+    type Value = T;
+
+    fn value(&self) -> T {
+        self.value
+    }
+
+    fn time(&self) -> SystemTime {
+        Exemplar::time(self)
+    }
+
+    fn trace_id(&self) -> [u8; 16] {
+        *Exemplar::trace_id(self)
+    }
+
+    fn span_id(&self) -> [u8; 8] {
+        *Exemplar::span_id(self)
+    }
+
+    fn filtered_attributes(&self) -> impl Iterator<Item = &KeyValue> {
+        Exemplar::filtered_attributes(self)
+    }
+}
+
+fn write_exemplar<'a, E: ExemplarPoint + 'a, U: uWrite>(
     f: &mut U,
-    exemplars: impl IntoIterator<Item = &'a Exemplar<T>>,
+    exemplars: impl IntoIterator<Item = &'a E>,
 ) -> Result<(), U::Error> {
     // Write at most one exemplar, preferring the most recent measurement.
     let Some(exemplar) = exemplars.into_iter().max_by_key(|e| e.time()) else {
@@ -810,14 +856,14 @@ fn write_exemplar<'a, T: Numeric + Copy + 'a, U: uWrite>(
     // active; the SDK zeroes them otherwise) plus the filtered attributes.
     // c[impl exemplar.trace-span-ids]
     let mut labels = Vec::new();
-    let trace_id = *exemplar.trace_id();
+    let trace_id = exemplar.trace_id();
     if trace_id != [0; 16] {
         labels.push(KeyValue::new(
             "trace_id",
             TraceId::from_bytes(trace_id).to_string(),
         ));
     }
-    let span_id = *exemplar.span_id();
+    let span_id = exemplar.span_id();
     if span_id != [0; 8] {
         labels.push(KeyValue::new(
             "span_id",
@@ -836,7 +882,7 @@ fn write_exemplar<'a, T: Numeric + Copy + 'a, U: uWrite>(
     uwrite!(
         f,
         "}} {} {}",
-        exemplar.value.fast_display(),
+        exemplar.value().fast_display(),
         to_timestamp(exemplar.time()),
     )?;
     Ok(())
