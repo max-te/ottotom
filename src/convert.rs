@@ -413,6 +413,20 @@ fn write_values<U: uWrite>(
     }
 }
 
+/// Whether `value` belongs to the `i`-th bucket of `bounds`, which spans the
+/// half-open range `(bounds[i - 1], bounds[i]]`. The index `bounds.len()`
+/// denotes the `+Inf` bucket, holding everything above the last finite bound.
+fn falls_in_bucket<T: Numeric>(bounds: &[f64], i: usize, value: &T) -> bool {
+    let value = value.to_f64();
+    let lower = if i > 0 {
+        bounds[i - 1]
+    } else {
+        f64::NEG_INFINITY
+    };
+    let upper = bounds.get(i).copied().unwrap_or(f64::INFINITY);
+    value > lower && value <= upper
+}
+
 fn write_histogram<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     histogram: &Histogram<T>,
@@ -519,16 +533,11 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             // c[impl exemplar.bucket-single]
             // c[impl histogram.bucket.exemplar] - a single exemplar per `le`
             // bucket, attached to no other `le`-labelled point
-            let lower = if i > 0 {
-                bounds[i - 1]
-            } else {
-                f64::NEG_INFINITY
-            };
             write_exemplar(
                 &mut ctx.f,
                 point
                     .exemplars()
-                    .filter(|e| e.value.to_f64() > lower && e.value.to_f64() <= *bound),
+                    .filter(|e| falls_in_bucket(&bounds, i, &e.value)),
             )?;
             ctx.f.write_char('\n')?;
         }
@@ -543,12 +552,12 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             ts,
         )?;
         // Exemplars above the last finite bound belong to the +Inf bucket.
-        if let Some(&last) = bounds.last() {
-            write_exemplar(
-                &mut ctx.f,
-                point.exemplars().filter(|e| e.value.to_f64() > last),
-            )?;
-        }
+        write_exemplar(
+            &mut ctx.f,
+            point
+                .exemplars()
+                .filter(|e| falls_in_bucket(&bounds, bounds.len(), &e.value)),
+        )?;
         ctx.f.write_char('\n')?;
     }
     Ok(())

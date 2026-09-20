@@ -576,6 +576,50 @@ fn test_exemplar_roundtrip() {
 }
 
 #[test]
+// om[verify exemplars.bucket-attachment]
+// c[verify histogram.bucket.exemplar]
+fn test_falls_in_bucket() {
+    const BOUNDS: [f64; 3] = [1.0, 2.0, 3.0];
+
+    for (bucket, value, expected) in [
+        (0, 0.5, true),
+        // A bound closes its own bucket and opens the next.
+        (0, 1.0, true),
+        (0, 1.5, false),
+        (1, 1.0, false),
+        (1, 1.5, true),
+        (1, 2.0, true),
+        (1, 5.0, false),
+        // The +Inf bucket takes everything above the last finite bound.
+        (3, 3.0, false),
+        (3, 5.0, true),
+    ] {
+        assert_eq!(
+            falls_in_bucket(&BOUNDS, bucket, &value),
+            expected,
+            "bucket {bucket}, value {value}"
+        );
+    }
+}
+
+#[test]
+fn test_falls_in_bucket_value_types() {
+    const BOUNDS: [f64; 3] = [1.0, 2.0, 3.0];
+
+    // Values are widened to f64 to be compared against the bounds.
+    assert!(falls_in_bucket(&BOUNDS, 3, &5u64));
+    assert!(falls_in_bucket(&BOUNDS, 3, &5i64));
+    assert!(falls_in_bucket(&BOUNDS, 0, &-5i64));
+
+    // NaN belongs to no bucket at all.
+    assert!(!falls_in_bucket(&BOUNDS, 0, &f64::NAN));
+    assert!(!falls_in_bucket(&BOUNDS, 3, &f64::NAN));
+
+    // Without finite bounds, +Inf is the only bucket there is.
+    assert!(falls_in_bucket(&[], 0, &5.0));
+}
+
+#[test]
 // om[verify metric.nointerleave] - all samples of one LabelSet (Metric) precede the next
 // om[verify metricpoint.nointerleave] - count/sum/bucket samples of one point are contiguous
 // om[verify histogram.inf-bucket]
