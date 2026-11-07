@@ -50,4 +50,33 @@ jobs:
         path: |
           ephyra-tests/.ephyra/regressions
           ephyra-tests/.ephyra/reports.jsonl
+        # `.ephyra` is a hidden directory, which is skipped by default.
+        include-hidden-files: true
         if-no-files-found: warn
+
+  # A failing scheduled search notifies only the person who last edited the
+  # schedule, so it opens an issue instead, or comments on the open one.
+  report:
+    needs: ephyra
+    if: failure() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+        sparse-checkout: .github/scripts
+    - name: Download counterexamples
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: ephyra-counterexamples
+        path: counterexamples
+    - name: Open or update the issue
+      uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9
+      with:
+        script: |
+          const report = require('./.github/scripts/ephyra-issue.js');
+          await report({ github, context, reportPath: 'counterexamples/reports.jsonl' });
