@@ -217,9 +217,9 @@ fn counter_and_gauge_do_not_share_a_sample_name() {
 }
 
 #[test]
-// OpenMetrics 1.0: "If and only if a Sum Value is present in a MetricPoint,
-// then the MetricPoint's +Inf Bucket value MUST also appear in a Sample with a
-// MetricName with the suffix `_count`."
+// om[verify histogram.count-iff-sum] - "If and only if a Sum Value is present in a
+// MetricPoint, then the MetricPoint's +Inf Bucket value MUST also appear in a
+// Sample with a MetricName with the suffix `_count`."
 fn histogram_without_sum_has_no_count() {
     let scenario = plain(vec![scope(
         "s",
@@ -237,8 +237,8 @@ fn histogram_without_sum_has_no_count() {
 }
 
 #[test]
-// OpenMetrics 1.0: "Negative threshold buckets MAY be used, but then the
-// Histogram MetricPoint MUST NOT contain a sum value."
+// om[verify histogram.negative-threshold-nosum] - "Negative threshold buckets
+// MAY be used, but then the Histogram MetricPoint MUST NOT contain a sum value."
 // c[verify histogram.sum] - "The sum is positive and monotonic when all buckets are positive."
 fn histogram_with_negative_bucket_threshold_has_no_sum() {
     let mut h = instrument("h", Kind::F64Histogram, vec![record(0, 0.5, vec![])]);

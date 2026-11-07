@@ -340,16 +340,13 @@ fn histogram_points_are_consistent(scenario: Scenario) {
         }
     }
     for (key, points) in &buckets {
-        // OpenMetrics 1.0: "If and only if a Sum Value is present in a
-        // MetricPoint, then the MetricPoint's +Inf Bucket value MUST also
-        // appear in a Sample with a MetricName with the suffix `_count`."
+        // om[verify histogram.count-iff-sum]
         assert_eq!(
             sums.contains(key),
             counts.contains_key(key),
             "_sum and _count disagree for {key:?}\n{text}"
         );
-        // OpenMetrics 1.0: "Negative threshold buckets MAY be used, but then
-        // the Histogram MetricPoint MUST NOT contain a sum value."
+        // om[verify histogram.negative-threshold-nosum]
         // c[verify histogram.sum] - "The sum is positive and monotonic when all buckets are positive."
         if points.iter().any(|(bound, _)| *bound < 0.0) {
             assert!(
