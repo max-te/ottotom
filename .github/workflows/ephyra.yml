@@ -1,0 +1,53 @@
+name: Property tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  # A weekly search with a random seed, for bugs no change has introduced.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ephyra:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ephyra-tests
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+    # Pushes and pull requests use a fixed seed, so they fail only for the
+    # change under test. Stored regressions are replayed in every run.
+    - name: Run property tests (fixed seed)
+      if: github.event_name == 'push' || github.event_name == 'pull_request'
+      run: cargo test --release --locked
+      env:
+        EPHYRA_SEED: 1
+        EPHYRA_REPORT_JSON: .ephyra/reports.jsonl
+    - name: Search with a random seed
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+      run: cargo test --release --locked
+      env:
+        EPHYRA_TESTS: 20000
+        EPHYRA_FAILURES: 12
+        EPHYRA_REPORT_JSON: .ephyra/reports.jsonl
+    # The counterexamples are stored as new regression entries; commit them
+    # together with the fix.
+    - name: Upload counterexamples
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: ephyra-counterexamples
+        path: |
+          ephyra-tests/.ephyra/regressions
+          ephyra-tests/.ephyra/reports.jsonl
+        if-no-files-found: warn
