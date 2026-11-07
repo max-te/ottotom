@@ -467,6 +467,8 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
 
     let mut points: Vec<_> = histogram.data_points().collect();
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
+    let reserved = reserved_labels(ctx.config, true);
+    points.retain(|p| keeps_reserved_labels(&ctx.name, p.attributes(), reserved));
 
     // om[impl metric.nointerleave] - each point's LabelSet is written contiguously
     for point in points {
@@ -599,6 +601,8 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
 
     let mut points: Vec<_> = sum.data_points().collect();
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
+    let reserved = reserved_labels(ctx.config, false);
+    points.retain(|p| keeps_reserved_labels(&ctx.name, p.attributes(), reserved));
 
     let ts = to_timestamp(sum.time());
     let created = to_timestamp(sum.start_time());
@@ -670,6 +674,8 @@ fn write_gauge<T: Numeric + Copy, U: uWrite>(
     let ts = to_timestamp(gauge.time());
     let mut points: Vec<_> = gauge.data_points().collect();
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
+    let reserved = reserved_labels(ctx.config, false);
+    points.retain(|p| keeps_reserved_labels(&ctx.name, p.attributes(), reserved));
     for point in points {
         attrs.clear();
         let Ok(()) = write_attrs_with(
@@ -709,6 +715,68 @@ fn make_scope_name_attrs(
     } else {
         Vec::new()
     }
+}
+
+/// The labels the converter adds to a point itself, so no point attribute may
+/// be written under one of these names.
+fn reserved_labels(config: Config, histogram: bool) -> &'static [&'static str] {
+    // om[impl histogram.nole] - `le` is reserved for the bucket threshold
+    match (config.scope_info_enabled, histogram) {
+        (true, true) => &["le", "otel_scope_name", "otel_scope_version"],
+        (true, false) => &["otel_scope_name", "otel_scope_version"],
+        (false, true) => &["le"],
+        (false, false) => &[],
+    }
+}
+
+/// Whether a point of `metric` keeps the `reserved` labels intact. A point with
+/// an attribute that would be written as one of them is dropped with a warning.
+// om[impl labels.unique] - an attribute must not repeat a label the converter adds
+fn keeps_reserved_labels<'a>(
+    metric: &str,
+    mut attrs: impl Iterator<Item = &'a KeyValue>,
+    reserved: &[&'static str],
+) -> bool {
+    if reserved.is_empty() {
+        return true;
+    }
+    let shadowing = attrs.find_map(|kv| {
+        reserved
+            .iter()
+            .find(|label| sanitizes_to(kv.key.as_str(), label))
+            .map(|label| (kv, *label))
+    });
+    let Some((kv, label)) = shadowing else {
+        return true;
+    };
+    // c[impl metadata.drop-warn]
+    warn!(
+        "Dropping a point of {metric}: its attribute {:?} would be written as the reserved label `{label}`",
+        kv.key.as_str()
+    );
+    false
+}
+
+/// Whether `key` is written as the label name `label`, compared without allocating.
+fn sanitizes_to(key: &str, label: &str) -> bool {
+    /// Accepts exactly the text of the label, piece by piece.
+    struct Expect<'l>(&'l str);
+
+    impl uWrite for Expect<'_> {
+        type Error = ();
+
+        fn write_str(&mut self, s: &str) -> Result<(), ()> {
+            self.0 = self.0.strip_prefix(s).ok_or(())?;
+            Ok(())
+        }
+    }
+
+    // Sanitizing keeps a leading letter, and every reserved label starts with one.
+    if key.as_bytes().first() != label.as_bytes().first() {
+        return false;
+    }
+    let mut expect = Expect(label);
+    write_sanitized_name(&mut expect, key, NameKind::AttributeLabel).is_ok() && expect.0.is_empty()
 }
 
 /// Write the attribute string for attrs. Does not write curly braces.
