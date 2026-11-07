@@ -1,4 +1,4 @@
-//! Guards the number of allocations the conversion makes per data point.
+//! Guards that the conversion allocates nothing per data point.
 //!
 //! Counting allocations needs a global allocator, which needs `unsafe`, which
 //! the workspace otherwise denies. The allocator lives in its own test binary
@@ -11,11 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use ottotom::convert::WriteOpenMetrics;
 use ottotom_testsupport::resource_metrics::gauge_metrics;
-
-/// Allocations per added data point, measured on a gauge with one string
-/// attribute. The one allocation is the label list that `write_attrs_tuple`
-/// collects per point.
-const ALLOCATIONS_PER_POINT: usize = 1;
 
 struct CountingAllocator;
 
@@ -48,16 +43,16 @@ fn allocations_converting(metrics: &ResourceMetrics) -> usize {
     ALLOCATIONS.load(Ordering::Relaxed) - before
 }
 
+/// Measured on gauges with one string attribute.
 #[test]
-fn allocations_per_point_do_not_grow() {
+fn added_points_allocate_nothing() {
     let small = gauge_metrics(16);
     let large = gauge_metrics(256);
     let added_points = 256 - 16;
 
     let added_allocations = allocations_converting(&large) - allocations_converting(&small);
-    let per_point = added_allocations.div_ceil(added_points);
-    assert!(
-        per_point <= ALLOCATIONS_PER_POINT,
+    assert_eq!(
+        added_allocations, 0,
         "{added_allocations} allocations for {added_points} added points"
     );
 }
