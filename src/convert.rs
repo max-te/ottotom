@@ -144,8 +144,8 @@ struct Context<W: uWrite> {
     attr_buffer: String,
     /// the current family's points, each with its label set in `attr_buffer`
     labeled_points: Vec<LabeledPoint>,
-    /// scratch space for sanitized label names, reused across points
-    label_names: String,
+    /// scratch space for writing label sets, reused across points
+    label_scratch: LabelScratch,
     /// the `le` labels of the last histogram point
     le_labels: LeLabels,
     /// the scope that tests write single metrics in
@@ -167,7 +167,7 @@ impl<'f, W: Write> Context<WriteAsUWrite<'f, W>> {
             config,
             attr_buffer: String::with_capacity(256),
             labeled_points: Vec::new(),
-            label_names: String::with_capacity(64),
+            label_scratch: LabelScratch::default(),
             le_labels: LeLabels::default(),
             #[cfg(test)]
             scope_name: "",
@@ -345,7 +345,7 @@ fn write_target_info<U: uWrite>(
     // om[impl info.suffix]
     f.write_str("target_info{")?;
     // c[impl resource.attrs-sanitize] - resource attrs go through the same sanitization
-    write_attrs_tuple(f, &mut String::with_capacity(64), resource.iter())?;
+    write_attrs_tuple(f, &mut LabelScratch::default(), resource.iter())?;
     // om[impl info.value]
     f.write_str("} 1\n")?;
     Ok(())
@@ -653,7 +653,7 @@ fn write_otel_scope_info<U: uWrite>(
     // c[impl scope.info]
     f.write_str("# TYPE otel_scope info\n")?;
 
-    let mut label_names = String::with_capacity(64);
+    let mut scratch = LabelScratch::default();
     for scope in metrics {
         // c[impl scope.name-version]
         let otel_attrs =
@@ -662,7 +662,7 @@ fn write_otel_scope_info<U: uWrite>(
         // c[impl scope.attribute-labels]
         write_attrs_with(
             f,
-            &mut label_names,
+            &mut scratch,
             otel_attrs.iter().chain(scope.scope().attributes()),
         )?;
         // om[impl info.value]
@@ -969,7 +969,7 @@ impl<D: DataPoints> FamilyMember for D {
             let start = text.len();
             let Ok(()) = write_attrs_with(
                 text,
-                &mut family.ctx.label_names,
+                &mut family.ctx.label_scratch,
                 D::attributes(point).chain(scope_name_attrs.iter()),
             );
             points.push(LabeledPoint {
@@ -1512,34 +1512,64 @@ fn write_attrs<'a, I: Iterator<Item = &'a KeyValue>, U: uWrite>(
     f: &mut U,
     attrs: I,
 ) -> Result<(), U::Error> {
-    write_attrs_with(f, &mut String::new(), attrs)
+    write_attrs_with(f, &mut LabelScratch::default(), attrs)
 }
 
-/// Like [`write_attrs`], but reuses `label_names` as scratch space, so the
-/// per-point writers allocate nothing new.
+/// Like [`write_attrs`], but reuses `scratch`, so the per-point writers
+/// allocate nothing new.
 fn write_attrs_with<'a, I: Iterator<Item = &'a KeyValue>, U: uWrite>(
     f: &mut U,
-    label_names: &mut String,
+    scratch: &mut LabelScratch,
     attrs: I,
 ) -> Result<(), U::Error> {
-    write_attrs_tuple(f, label_names, attrs.map(|kv| (&kv.key, &kv.value)))
+    write_attrs_tuple(f, scratch, attrs.map(|kv| (&kv.key, &kv.value)))
+}
+
+/// One label while a label set is written: the byte range of its sanitized
+/// name in [`LabelScratch::names`], its original key and its value.
+type Label<'a> = (usize, usize, &'a Key, &'a Value);
+
+/// Reusable buffers for writing one label set.
+#[derive(Default)]
+struct LabelScratch {
+    /// the sanitized label names, back to back
+    names: String,
+    /// the memory of a `Vec<Label>`, kept empty between label sets
+    labels: Vec<(usize, usize, usize, usize)>,
+}
+
+// The label list reuses the memory of `LabelScratch::labels`, so both
+// element types must have the same layout.
+const _: () = {
+    assert!(size_of::<Label<'static>>() == size_of::<(usize, usize, usize, usize)>());
+    assert!(align_of::<Label<'static>>() == align_of::<(usize, usize, usize, usize)>());
+};
+
+/// Turns an empty `Vec<T>` into an empty `Vec<V>`. The standard library
+/// collects a mapped `vec::IntoIter` in place when `T` and `V` have the same
+/// layout, so the memory is reused and nothing is allocated.
+fn recycle<T, V>(mut vec: Vec<T>) -> Vec<V> {
+    vec.clear();
+    vec.into_iter()
+        .map(|_| -> V { unreachable!("the vector is empty") })
+        .collect()
 }
 
 fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
     f: &mut U,
-    label_names: &mut String,
+    scratch: &mut LabelScratch,
     attrs: I,
 ) -> Result<(), U::Error> {
     // c[impl mattrs.to-labels] - attribute keys/values are emitted as label name/value pairs
     // Each key is sanitized once into `label_names`; a label holds its byte range there.
+    let label_names = &mut scratch.names;
     label_names.clear();
-    let mut labels: Vec<(usize, usize, &Key, &Value)> = attrs
-        .map(|(key, value)| {
-            let start = label_names.len();
-            let Ok(()) = write_sanitized_name(label_names, key.as_str(), NameKind::AttributeLabel);
-            (start, label_names.len(), key, value)
-        })
-        .collect();
+    let mut labels: Vec<Label<'a>> = recycle(std::mem::take(&mut scratch.labels));
+    labels.extend(attrs.map(|(key, value)| {
+        let start = label_names.len();
+        let Ok(()) = write_sanitized_name(label_names, key.as_str(), NameKind::AttributeLabel);
+        (start, label_names.len(), key, value)
+    }));
     // c[impl mattrs.key-sanitize.collisions] - colliding labels become adjacent,
     // in the order of their original keys
     labels.sort_unstable_by(|a, b| {
@@ -1569,6 +1599,7 @@ fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
     if previous_name.is_some() {
         f.write_char('"')?;
     }
+    scratch.labels = recycle(labels);
     Ok(())
 }
 
