@@ -939,6 +939,12 @@ trait DataPoints {
 
     fn attributes(point: &Self::Point) -> impl Iterator<Item = &KeyValue>;
 
+    /// Whether the value of `point` can be written. A point whose value would
+    /// be invalid output is reported as dropped.
+    fn keeps_value(&self, _metric: &str, _point: &Self::Point) -> bool {
+        true
+    }
+
     /// Writes the samples of `points`, each with its rendered label set.
     fn write_samples<'p, U: uWrite>(
         &'p self,
@@ -963,7 +969,9 @@ impl<D: DataPoints> FamilyMember for D {
         let count = data_points.size_hint().0;
         points.reserve(count);
         for (index, point) in data_points.enumerate() {
-            if !keeps_reserved_labels(family.name, D::attributes(point), reserved) {
+            if !keeps_reserved_labels(family.name, D::attributes(point), reserved)
+                || !self.keeps_value(family.name, point)
+            {
                 continue;
             }
             let start = text.len();
@@ -1200,8 +1208,11 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
         // c[impl histogram.sum] - {name}_sum only if the sum is positive and monotonic
         // om[impl histogram.negative-threshold-nosum]
         // TODO: monitor if opentelmetry-sdk introduces positive f64 histograms?
+        // om[impl histogram.nonanneg] - a NaN sum, which the SDK before 0.33.1
+        // records, is left out like a negative one
         let has_sum = (T::is_unsigned() || point.min().as_ref().is_some_and(T::is_nonnegative))
-            && bounds.iter().all(|bound| *bound >= 0.0);
+            && bounds.iter().all(|bound| *bound >= 0.0)
+            && !point.sum().to_f64().is_nan();
         // om[impl metricpoint.nointerleave] - all value samples of one MetricPoint are written contiguously
         // om[impl histogram.count-iff-sum] - the +Inf bucket still carries the count
         if has_sum {
@@ -1312,6 +1323,20 @@ impl<T: Numeric + Copy> DataPoints for Sum<T> {
 
     fn attributes(point: &Self::Point) -> impl Iterator<Item = &KeyValue> {
         point.attributes()
+    }
+
+    /// Keeps a counter point only if its total is a number of at least 0.
+    /// The SDK before 0.33.1 records NaN and infinite measurements.
+    fn keeps_value(&self, metric: &str, point: &Self::Point) -> bool {
+        let total = point.value().to_f64();
+        if !self.is_monotonic() || total >= 0.0 {
+            return true;
+        }
+        warn!(
+            points = 1,
+            "Dropping a point of {metric}: its total {total} is not a valid counter total"
+        );
+        false
     }
 
     fn write_samples<'p, U: uWrite>(
