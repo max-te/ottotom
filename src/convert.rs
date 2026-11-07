@@ -4,7 +4,7 @@ use std::hash::{DefaultHasher, Hasher};
 use std::time::SystemTime;
 
 use crate::format::Numeric;
-use opentelemetry::{Key, KeyValue, SpanId, TraceId, Value};
+use opentelemetry::{InstrumentationScope, Key, KeyValue, SpanId, TraceId, Value};
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, Exemplar, Gauge, Histogram, MetricData, ResourceMetrics, Sum,
@@ -205,31 +205,33 @@ impl WriteOpenMetrics for ResourceMetrics {
         }
 
         let mut scopes: Vec<&ScopeMetrics> = self.scope_metrics().collect();
-        scopes.sort_unstable_by_key(|s| s.scope().name());
+        scopes.sort_by_cached_key(|s| {
+            let scope = s.scope();
+            (
+                scope.name(),
+                scope.version(),
+                hash_attrs(scope.attributes()),
+            )
+        });
 
         if ctx.config.scope_info_enabled {
             // c[impl scope.config-disable] - the config struct is the configuration switch
             write_otel_scope_info(&mut ctx.f, &scopes, ctx.config)?;
         }
 
-        for scope in scopes {
+        let Plan { names, members } = Plan::new(&mut ctx, &scopes);
+        // om[impl metricfamily.nointerleave] - each MetricFamily is fully written before the next
+        for member in members {
+            ctx.name.clear();
+            ctx.name.push_str(&names[member.family.0..member.family.1]);
+            ctx.typ = member.typ;
+            ctx.unit = member.unit;
             if ctx.config.scope_info_enabled {
-                ctx.scope_name = scope.scope().name();
-                ctx.scope_version = scope.scope().version();
+                ctx.scope_name = member.scope.name();
+                ctx.scope_version = member.scope.version();
             }
-            let mut metrics: Vec<_> = scope.metrics().collect();
-            metrics.sort_unstable_by_key(|met| met.name());
-
-            // om[impl metricfamily.nointerleave] - each MetricFamily is fully written before the next
-            for metric in metrics {
-                if extract_type_unit_and_name(&mut ctx, metric) {
-                    write_header(&mut ctx, metric.description())?;
-                    write_values(&mut ctx, metric.data())?;
-                } else {
-                    // c[impl metadata.drop-warn]
-                    warn!("Unsupported metric type {metric:?}");
-                }
-            }
+            write_header(&mut ctx, member.metric.description())?;
+            write_values(&mut ctx, member.metric.data())?;
         }
         // om[impl text.eof]
         f.write_str("# EOF\n")?;
@@ -251,6 +253,81 @@ fn write_target_info<U: uWrite>(
     // om[impl info.value]
     f.write_str("} 1\n")?;
     Ok(())
+}
+
+/// One metric, placed in the family it is written to.
+struct Member<'m> {
+    /// byte range of the family name in [`Plan::names`]
+    family: (usize, usize),
+    typ: &'static str,
+    unit: Option<Cow<'static, str>>,
+    scope: &'m InstrumentationScope,
+    /// order-independent hash of the scope attributes, to order scopes that share name and version
+    scope_hash: u64,
+    metric: &'m Metric,
+}
+
+/// The metrics of one conversion, in the order their families are written.
+struct Plan<'m> {
+    /// all family names, back to back
+    names: String,
+    members: Vec<Member<'m>>,
+}
+
+impl<'m> Plan<'m> {
+    /// Places every supported metric of `scopes` in its family and orders the
+    /// result by family name. Unsupported metrics are dropped with a warning.
+    fn new(
+        ctx: &mut Context<'_, impl uWrite<Error = std::fmt::Error>>,
+        scopes: &[&'m ScopeMetrics],
+    ) -> Self {
+        let mut names = String::new();
+        let mut members = Vec::new();
+        for scope_metrics in scopes {
+            let scope = scope_metrics.scope();
+            let scope_hash = hash_attrs(scope.attributes());
+            for metric in scope_metrics.metrics() {
+                if extract_type_unit_and_name(ctx, metric) {
+                    let start = names.len();
+                    names.push_str(&ctx.name);
+                    members.push(Member {
+                        family: (start, names.len()),
+                        typ: ctx.typ,
+                        unit: ctx.unit.take(),
+                        scope,
+                        scope_hash,
+                        metric,
+                    });
+                } else {
+                    // c[impl metadata.drop-warn]
+                    warn!("Unsupported metric type {metric:?}");
+                }
+            }
+        }
+        // Deterministic output: the order depends on what is written, not on
+        // the order in which the SDK reports scopes and metrics.
+        members.sort_by(|a, b| {
+            names[a.family.0..a.family.1]
+                .cmp(&names[b.family.0..b.family.1])
+                .then_with(|| a.typ.cmp(b.typ))
+                .then_with(|| a.scope.name().cmp(b.scope.name()))
+                .then_with(|| a.scope.version().cmp(&b.scope.version()))
+                .then_with(|| a.scope_hash.cmp(&b.scope_hash))
+                .then_with(|| a.metric.name().cmp(b.metric.name()))
+                .then_with(|| number_kind(a.metric.data()).cmp(&number_kind(b.metric.data())))
+                .then_with(|| a.metric.description().cmp(b.metric.description()))
+        });
+        Plan { names, members }
+    }
+}
+
+/// Orders metrics of one name that differ only in their number type.
+fn number_kind(data: &AggregatedMetrics) -> u8 {
+    match data {
+        AggregatedMetrics::F64(_) => 0,
+        AggregatedMetrics::U64(_) => 1,
+        AggregatedMetrics::I64(_) => 2,
+    }
 }
 
 fn extract_type_unit_and_name(
@@ -326,7 +403,7 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
     }
 }
 
-/// Write the current metric's metadata. Make sure to call [`extract_type_unit_and_name`] first.
+/// Write the metadata of the family named in `ctx.name`, with `ctx.typ` and `ctx.unit`.
 // om[impl metadata.order] - TYPE is written first, then UNIT, then HELP
 // om[impl metadata.unique] - at most one TYPE/UNIT/HELP line per family
 #[inline]

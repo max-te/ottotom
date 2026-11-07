@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use insta::assert_snapshot;
-use opentelemetry::{Array, KeyValue, Value};
+use opentelemetry::{Array, InstrumentationScope, KeyValue, Value};
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
     FromAggregated, make_f64_counter_metric, make_f64_exponential_histogram_metric_handle,
@@ -9,7 +9,9 @@ use ottotom_testsupport::metric_data::{
     make_i64_gauge_metric, make_u64_counter_metric_handle, make_u64_gauge_metric,
     make_u64_gauge_metric_handle, make_u64_histogram_metric,
 };
-use ottotom_testsupport::resource_metrics::{collect_metrics, make_test_metrics};
+use ottotom_testsupport::resource_metrics::{
+    collect_from_scopes, collect_metrics, make_test_metrics,
+};
 use ottotom_testsupport::timestamps::ExtractTimestamps;
 use ufmt::uwrite;
 
@@ -1124,4 +1126,51 @@ mod write_values {
         output = strip_timestamps(output, data.extract_timestamps());
         assert_snapshot!(strip_otel_scope_name(&output));
     }
+}
+
+/// The `# TYPE` lines of `text`, which carry no timestamps.
+fn type_lines(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| line.starts_with("# TYPE "))
+        .collect()
+}
+
+#[test]
+fn test_family_order_does_not_depend_on_creation_order() {
+    // A gauge `b` and a counter `b` with unit `1` write the families `b` and `b_ratio`.
+    let gauge_first = collect_metrics(|meter| {
+        meter.u64_gauge("b").build().record(1, &[]);
+        meter.u64_counter("b").with_unit("1").build().add(1, &[]);
+    });
+    let counter_first = collect_metrics(|meter| {
+        meter.u64_counter("b").with_unit("1").build().add(1, &[]);
+        meter.u64_gauge("b").build().record(1, &[]);
+    });
+    let gauge_first = gauge_first.to_openmetrics_string().unwrap();
+    let counter_first = counter_first.to_openmetrics_string().unwrap();
+    assert_eq!(type_lines(&gauge_first), type_lines(&counter_first));
+}
+
+#[test]
+fn test_scope_order_does_not_depend_on_creation_order() {
+    let scope = |version: &'static str| {
+        InstrumentationScope::builder("s")
+            .with_version(version)
+            .build()
+    };
+    let record = |meters: &[opentelemetry::metrics::Meter]| {
+        for meter in meters {
+            meter.u64_gauge("g").build().record(1, &[]);
+        }
+    };
+    let ascending = collect_from_scopes([scope("1"), scope("2")], record);
+    let descending = collect_from_scopes([scope("2"), scope("1")], record);
+    let info_lines = |metrics: &ResourceMetrics| {
+        let text = metrics.to_openmetrics_string().unwrap();
+        text.lines()
+            .filter(|line| line.starts_with("otel_scope_info"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(info_lines(&ascending), info_lines(&descending));
 }
