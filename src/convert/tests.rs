@@ -606,6 +606,57 @@ fn test_write_histogram_omits_count_without_sum() {
     assert!(output.contains("_count"), "{output}");
 }
 
+#[test]
+// om[verify histogram.nole]
+fn test_write_histogram_drops_points_with_le_attribute() {
+    let histogram = make_u64_histogram_metric(vec![
+        (1, vec![KeyValue::new("le", "x")]),
+        (2, vec![KeyValue::new("k", "v")]),
+    ]);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &histogram).unwrap();
+    assert!(!output.contains("le=\"x\""), "{output}");
+    assert!(output.contains("k=\"v\""), "{output}");
+}
+
+#[test]
+// om[verify labels.unique]
+fn test_write_gauge_drops_points_shadowing_scope_labels() {
+    let gauge = make_f64_gauge_metric(vec![
+        (1.0, vec![KeyValue::new("otel.scope.name", "x")]),
+        (2.0, vec![KeyValue::new("k", "v")]),
+    ]);
+    let mut output = String::new();
+    write_gauge(&mut Context::with_output(&mut output), &gauge).unwrap();
+    assert!(!output.contains("\"x\""), "{output}");
+    assert!(output.contains("k=\"v\""), "{output}");
+
+    // Without scope labels, the attribute is an ordinary label.
+    let config = Config::builder().scope_info_enabled(false).build();
+    let mut output = String::new();
+    write_gauge(&mut Context::with_config(&mut output, config), &gauge).unwrap();
+    assert!(output.contains("otel_scope_name=\"x\""), "{output}");
+}
+
+#[test]
+fn test_sanitizes_to() {
+    for key in ["otel_scope_name", "otel.scope.name", "otel__scope-name"] {
+        assert!(sanitizes_to(key, "otel_scope_name"), "{key}");
+    }
+    for key in [
+        "otel.scope.names",
+        "otel_scope",
+        "_otel_scope_name",
+        "Otel_scope_name",
+    ] {
+        assert!(!sanitizes_to(key, "otel_scope_name"), "{key}");
+    }
+    assert!(sanitizes_to("le", "le"));
+    for key in ["le.", "1le", ".le", "lee"] {
+        assert!(!sanitizes_to(key, "le"), "{key}");
+    }
+}
+
 /// A histogram with explicit bucket `bounds` and one observation of `value`.
 fn make_f64_histogram_with_bounds(bounds: Vec<f64>, value: f64) -> Histogram<f64> {
     let metrics = collect_metrics(|meter| {
