@@ -408,12 +408,11 @@ fn test_write_gauge() {
 
     let mut ctx = Context {
         attr_buffer: String::from("staledata"),
-        name: "mygauge".to_owned(),
         scope_name: "myscope",
         ..Context::with_output(&mut output)
     };
 
-    write_gauge(&mut ctx, &metric).unwrap();
+    write_gauge(&mut ctx.family("mygauge", "gauge", None), &metric).unwrap();
     let output = output.replace(&ts, "<TIMESTAMP>");
     assert_snapshot!(strip_otel_scope_name(&output));
 }
@@ -450,8 +449,9 @@ fn test_write_counter() {
             scope_name: "myscope",
             ..Context::with_output(&mut output)
         };
-        assert!(extract_type_unit_and_name(&mut ctx, &handle));
-        write_counter(&mut ctx, &sum).unwrap();
+        let mut name = String::new();
+        let (typ, unit) = extract_type_unit_and_name(&mut name, &handle).unwrap();
+        write_counter(&mut ctx.family(&name, typ, unit.as_deref()), &sum).unwrap();
 
         output
             .replace(&ts, "<TIMESTAMP>")
@@ -577,18 +577,30 @@ fn test_write_bucket_exemplar() {
 fn test_write_histogram_omits_sum_when_not_monotonic() {
     let negative = make_f64_histogram_metric(vec![(-1.0, vec![])]);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &negative).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &negative,
+    )
+    .unwrap();
     assert!(!output.contains("_sum"), "{output}");
 
     let nonnegative = make_f64_histogram_metric(vec![(1.0, vec![])]);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &nonnegative).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &nonnegative,
+    )
+    .unwrap();
     assert!(output.contains("_sum"), "{output}");
 
     // Unsigned values need no such check; their sum is monotonic by type.
     let unsigned = make_u64_histogram_metric(vec![(1, vec![])]);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &unsigned).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &unsigned,
+    )
+    .unwrap();
     assert!(output.contains("_sum"), "{output}");
 }
 
@@ -597,14 +609,22 @@ fn test_write_histogram_omits_sum_when_not_monotonic() {
 fn test_write_histogram_omits_count_without_sum() {
     let negative = make_f64_histogram_metric(vec![(-1.0, vec![])]);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &negative).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &negative,
+    )
+    .unwrap();
     assert!(!output.contains("_count"), "{output}");
     // The +Inf bucket still carries the count.
     assert!(output.contains("le=\"+Inf\"} 1 "), "{output}");
 
     let nonnegative = make_f64_histogram_metric(vec![(1.0, vec![])]);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &nonnegative).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &nonnegative,
+    )
+    .unwrap();
     assert!(output.contains("_count"), "{output}");
 }
 
@@ -616,7 +636,11 @@ fn test_write_histogram_drops_points_with_le_attribute() {
         (2, vec![KeyValue::new("k", "v")]),
     ]);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &histogram).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &histogram,
+    )
+    .unwrap();
     assert!(!output.contains("le=\"x\""), "{output}");
     assert!(output.contains("k=\"v\""), "{output}");
 }
@@ -629,14 +653,22 @@ fn test_write_gauge_drops_points_shadowing_scope_labels() {
         (2.0, vec![KeyValue::new("k", "v")]),
     ]);
     let mut output = String::new();
-    write_gauge(&mut Context::with_output(&mut output), &gauge).unwrap();
+    write_gauge(
+        &mut Context::with_output(&mut output).family("", "gauge", None),
+        &gauge,
+    )
+    .unwrap();
     assert!(!output.contains("\"x\""), "{output}");
     assert!(output.contains("k=\"v\""), "{output}");
 
     // Without scope labels, the attribute is an ordinary label.
     let config = Config::builder().scope_info_enabled(false).build();
     let mut output = String::new();
-    write_gauge(&mut Context::with_config(&mut output, config), &gauge).unwrap();
+    write_gauge(
+        &mut Context::with_config(&mut output, config).family("", "gauge", None),
+        &gauge,
+    )
+    .unwrap();
     assert!(output.contains("otel_scope_name=\"x\""), "{output}");
 }
 
@@ -680,14 +712,22 @@ fn make_f64_histogram_with_bounds(bounds: Vec<f64>, value: f64) -> Histogram<f64
 fn test_write_histogram_omits_sum_with_negative_threshold() {
     let negative_threshold = make_f64_histogram_with_bounds(vec![-1.0, 1.0], 0.5);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &negative_threshold).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &negative_threshold,
+    )
+    .unwrap();
     assert!(!output.contains("_sum"), "{output}");
     assert!(!output.contains("_count"), "{output}");
 
     // A zero threshold is not negative.
     let zero_threshold = make_f64_histogram_with_bounds(vec![0.0, 1.0], 0.5);
     let mut output = String::new();
-    write_histogram(&mut Context::with_output(&mut output), &zero_threshold).unwrap();
+    write_histogram(
+        &mut Context::with_output(&mut output).family("", "histogram", None),
+        &zero_threshold,
+    )
+    .unwrap();
     assert!(output.contains("_sum"), "{output}");
 }
 
@@ -767,11 +807,10 @@ fn test_write_histogram() {
 
     let mut ctx = Context {
         attr_buffer: String::from("staledata"),
-        name: "myhistogram".to_owned(),
         scope_name: "myscope",
         ..Context::with_output(&mut output)
     };
-    write_histogram(&mut ctx, &metric).unwrap();
+    write_histogram(&mut ctx.family("myhistogram", "histogram", None), &metric).unwrap();
     let output = output.replace(&ts, "<TIMESTAMP>");
     let output = output.replace(&start_ts, "<START_TIMESTAMP>");
 
@@ -801,12 +840,11 @@ fn test_write_histogram_with_min_max() {
     let mut output = String::new();
     let mut ctx = Context {
         attr_buffer: String::from("staledata"),
-        name: "myhistogram".to_owned(),
         scope_name: "myscope",
         config: Config::builder().histogram_min_max(true).build(),
         ..Context::with_output(&mut output)
     };
-    write_histogram(&mut ctx, &metric).unwrap();
+    write_histogram(&mut ctx.family("myhistogram", "histogram", None), &metric).unwrap();
     let output = output.replace(&ts, "<TIMESTAMP>");
     let output = output.replace(&start_ts, "<START_TIMESTAMP>");
 
@@ -835,8 +873,7 @@ fn test_drop_exponential_histogram() {
 
     let mut output = String::new();
 
-    let mut ctx = Context::with_output(&mut output);
-    assert!(!extract_type_unit_and_name(&mut ctx, &metric));
+    assert!(extract_type_unit_and_name(&mut String::new(), &metric).is_none());
 
     metric
         .resource_metrics()
@@ -935,19 +972,13 @@ fn test_extract_type_unit_and_name_with_unit() {
         vec![(125, vec![KeyValue::new("kk", "v1")])],
     );
 
-    let mut output = String::new();
-    let mut ctx = Context {
-        attr_buffer: String::from("staledata"),
-        ..Context::with_output(&mut output)
-    };
-
-    let result = extract_type_unit_and_name(&mut ctx, &handle);
-    assert!(result);
-    assert_eq!(ctx.typ, "counter");
+    let mut name = String::from("stalename");
+    let (typ, unit) = extract_type_unit_and_name(&mut name, &handle).unwrap();
+    assert_eq!(typ, "counter");
     // om[verify metadata.unit-suffix]
     // c[verify metadata.unit-suffix]
-    assert_eq!(ctx.name, "u64_counter_seconds");
-    assert_eq!(ctx.unit, Some(std::borrow::Cow::Borrowed("seconds")));
+    assert_eq!(name, "u64_counter_seconds");
+    assert_eq!(unit, Some(std::borrow::Cow::Borrowed("seconds")));
 }
 
 #[test]
@@ -958,17 +989,12 @@ fn test_do_not_duplicate_unit() {
         None,
         vec![(125, vec![KeyValue::new("kk", "v1")])],
     );
-    let mut output = String::new();
-    let mut ctx = Context {
-        attr_buffer: String::from("staledata"),
-        ..Context::with_output(&mut output)
-    };
-    let result = extract_type_unit_and_name(&mut ctx, &handle);
-    assert!(result);
+    let mut name = String::new();
+    let (_, unit) = extract_type_unit_and_name(&mut name, &handle).unwrap();
     // om[verify metadata.unit-suffix]
     // c[verify metadata.unit-suffix]
-    assert_eq!(ctx.name, "u64_per_second");
-    assert_eq!(ctx.unit, Some(std::borrow::Cow::Borrowed("per_second")));
+    assert_eq!(name, "u64_per_second");
+    assert_eq!(unit, Some(std::borrow::Cow::Borrowed("per_second")));
 }
 
 #[test]
@@ -983,17 +1009,11 @@ fn test_extract_type_unit_and_name_no_unit() {
         .find(|m| m.name() == "histo")
         .expect("histo metric should exist");
 
-    let mut output = String::new();
-    let mut ctx = Context {
-        attr_buffer: String::from("staledata"),
-        ..Context::with_output(&mut output)
-    };
-
-    let result = extract_type_unit_and_name(&mut ctx, hist_metric);
-    assert!(result);
-    assert_eq!(ctx.typ, "histogram");
-    assert_eq!(ctx.name, "histo");
-    assert!(ctx.unit.is_none());
+    let mut name = String::new();
+    let (typ, unit) = extract_type_unit_and_name(&mut name, hist_metric).unwrap();
+    assert_eq!(typ, "histogram");
+    assert_eq!(name, "histo");
+    assert!(unit.is_none());
 }
 
 #[test]
@@ -1003,16 +1023,13 @@ fn test_extract_strip_total_suffix() {
     let values = vec![(1, vec![KeyValue::new("k", "v")])];
 
     let counter = make_u64_counter_metric_handle("mycounter_total", None, None, values.clone());
-    let mut counter_output = String::new();
-    let mut ctx = Context::with_output(&mut counter_output);
-    assert!(extract_type_unit_and_name(&mut ctx, &counter));
-    assert_eq!(ctx.name, "mycounter");
+    let mut name = String::new();
+    assert!(extract_type_unit_and_name(&mut name, &counter).is_some());
+    assert_eq!(name, "mycounter");
 
     let gauge = make_u64_gauge_metric_handle("gauge_total", None, None, values);
-    let mut gauge_output = String::new();
-    let mut ctx = Context::with_output(&mut gauge_output);
-    assert!(extract_type_unit_and_name(&mut ctx, &gauge));
-    assert_eq!(ctx.name, "gauge_total");
+    assert!(extract_type_unit_and_name(&mut name, &gauge).is_some());
+    assert_eq!(name, "gauge_total");
 }
 
 mod write_values {
@@ -1041,11 +1058,10 @@ mod write_values {
         let mut output = String::new();
         let mut ctx = Context {
             attr_buffer: String::from("staledata"),
-            name: "my_f64_sum".to_owned(),
             scope_name: "myscope",
             ..Context::with_output(&mut output)
         };
-        write_values(&mut ctx, &data).unwrap();
+        write_values(&mut ctx.family("my_f64_sum", "counter", None), &data).unwrap();
         output = strip_timestamps(output, data.extract_timestamps());
         assert_snapshot!(strip_otel_scope_name(&output));
     }
@@ -1059,11 +1075,10 @@ mod write_values {
         let mut output = String::new();
         let mut ctx = Context {
             attr_buffer: String::from("staledata"),
-            name: "my_u64_gauge".to_owned(),
             scope_name: "myscope",
             ..Context::with_output(&mut output)
         };
-        write_values(&mut ctx, &data).unwrap();
+        write_values(&mut ctx.family("my_u64_gauge", "gauge", None), &data).unwrap();
         output = strip_timestamps(output, data.extract_timestamps());
         assert_snapshot!(strip_otel_scope_name(&output));
     }
@@ -1082,11 +1097,10 @@ mod write_values {
         let mut output = String::new();
         let mut ctx = Context {
             attr_buffer: String::from("staledata"),
-            name: "my_u64_hist".to_owned(),
             scope_name: "myscope",
             ..Context::with_output(&mut output)
         };
-        write_values(&mut ctx, &data).unwrap();
+        write_values(&mut ctx.family("my_u64_hist", "histogram", None), &data).unwrap();
         output = strip_timestamps(output, data.extract_timestamps());
         assert_snapshot!(strip_otel_scope_name(&output));
     }
@@ -1100,11 +1114,10 @@ mod write_values {
         let mut output = String::new();
         let mut ctx = Context {
             attr_buffer: String::from("staledata"),
-            name: "my_i64_gauge".to_owned(),
             scope_name: "myscope",
             ..Context::with_output(&mut output)
         };
-        write_values(&mut ctx, &data).unwrap();
+        write_values(&mut ctx.family("my_i64_gauge", "gauge", None), &data).unwrap();
         output = strip_timestamps(output, data.extract_timestamps());
         assert_snapshot!(strip_otel_scope_name(&output));
     }
@@ -1118,11 +1131,10 @@ mod write_values {
         let mut output = String::new();
         let mut ctx = Context {
             attr_buffer: String::from("staledata"),
-            name: "my_i64_sum".to_owned(),
             scope_name: "myscope",
             ..Context::with_output(&mut output)
         };
-        write_values(&mut ctx, &data).unwrap();
+        write_values(&mut ctx.family("my_i64_sum", "gauge", None), &data).unwrap();
         output = strip_timestamps(output, data.extract_timestamps());
         assert_snapshot!(strip_otel_scope_name(&output));
     }

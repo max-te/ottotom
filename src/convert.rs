@@ -146,12 +146,6 @@ struct Context<W: uWrite> {
     labeled_points: Vec<LabeledPoint>,
     /// scratch space for sanitized label names, reused across points
     label_names: String,
-    /// the sanitized name of the current metric
-    name: String,
-    /// the converted unit string of the current metric
-    unit: Option<Cow<'static, str>>,
-    /// the OpenMetrics metric type of the current metric
-    typ: &'static str,
     /// the scope that tests write single metrics in
     #[cfg(test)]
     scope_name: &'static str,
@@ -172,15 +166,40 @@ impl<'f, W: Write> Context<WriteAsUWrite<'f, W>> {
             attr_buffer: String::with_capacity(256),
             labeled_points: Vec::new(),
             label_names: String::with_capacity(64),
-            name: String::with_capacity(64),
-            unit: None,
-            typ: "",
             #[cfg(test)]
             scope_name: "",
             #[cfg(test)]
             scope_version: None,
         }
     }
+}
+
+impl<U: uWrite> Context<U> {
+    /// Starts writing the family `name` of type `typ`.
+    fn family<'c>(
+        &'c mut self,
+        name: &'c str,
+        typ: &'static str,
+        unit: Option<&'c str>,
+    ) -> FamilyContext<'c, U> {
+        FamilyContext {
+            ctx: self,
+            name,
+            typ,
+            unit,
+        }
+    }
+}
+
+/// A [`Context`] while one family is written, with the family's metadata.
+struct FamilyContext<'c, U: uWrite> {
+    ctx: &'c mut Context<U>,
+    /// the sanitized family name, which starts every sample name
+    name: &'c str,
+    /// the OpenMetrics metric type
+    typ: &'static str,
+    /// the unit, already appended to `name`
+    unit: Option<&'c str>,
 }
 
 struct WriteAsUWrite<'w, W: Write>(&'w mut W);
@@ -226,7 +245,7 @@ impl WriteOpenMetrics for ResourceMetrics {
             write_otel_scope_info(&mut ctx.f, &scopes, ctx.config)?;
         }
 
-        let Plan { names, mut members } = Plan::new(&mut ctx, &scopes);
+        let Plan { names, mut members } = Plan::new(&scopes);
         let family_name = |member: &Member<'_>| &names[member.family.0..member.family.1];
         // Each family as the range of its members; the plan is ordered by
         // family name, so a family's members are adjacent.
@@ -273,11 +292,8 @@ impl WriteOpenMetrics for ResourceMetrics {
             // c[impl metadata.conflict-type] - the plan orders by type within a
             // family, so the first member's type wins
             let typ = family[0].typ;
-            ctx.name.clear();
-            ctx.name.push_str(name);
-            ctx.typ = typ;
             // c[impl metadata.conflict-unit-help] - the first UNIT and HELP are kept
-            ctx.unit = family
+            let unit = family
                 .iter_mut()
                 .filter(|member| member.typ == typ)
                 .find_map(|member| member.unit.take());
@@ -287,8 +303,9 @@ impl WriteOpenMetrics for ResourceMetrics {
                 .map(|member| member.metric.description())
                 .find(|description| !description.is_empty())
                 .unwrap_or_default();
+            let mut family_ctx = ctx.family(name, typ, unit.as_deref());
             // om[impl metadata.unique] - one header per family, however many metrics it holds
-            write_header(&mut ctx, description)?;
+            write_header(&mut family_ctx, description)?;
 
             // c[impl metadata.conflict-keep-points] - every member of the family's type is written
             let mut written = Vec::with_capacity(family.len());
@@ -305,7 +322,7 @@ impl WriteOpenMetrics for ResourceMetrics {
                 let scope = (member.scope.name(), member.scope.version());
                 written.push((scope, member.metric.data()));
             }
-            write_points(&mut ctx, &written)?;
+            write_points(&mut family_ctx, &written)?;
         }
         // om[impl text.eof]
         f.write_str("# EOF\n")?;
@@ -351,23 +368,21 @@ struct Plan<'m> {
 impl<'m> Plan<'m> {
     /// Places every supported metric of `scopes` in its family and orders the
     /// result by family name. Unsupported metrics are dropped with a warning.
-    fn new(
-        ctx: &mut Context<impl uWrite<Error = std::fmt::Error>>,
-        scopes: &[&'m ScopeMetrics],
-    ) -> Self {
+    fn new(scopes: &[&'m ScopeMetrics]) -> Self {
         let mut names = String::new();
+        let mut name = String::with_capacity(64);
         let mut members = Vec::new();
         for scope_metrics in scopes {
             let scope = scope_metrics.scope();
             let scope_hash = hash_attrs(scope.attributes());
             for metric in scope_metrics.metrics() {
-                if extract_type_unit_and_name(ctx, metric) {
+                if let Some((typ, unit)) = extract_type_unit_and_name(&mut name, metric) {
                     let start = names.len();
-                    names.push_str(&ctx.name);
+                    names.push_str(&name);
                     members.push(Member {
                         family: (start, names.len()),
-                        typ: ctx.typ,
-                        unit: ctx.unit.take(),
+                        typ,
+                        unit,
                         scope,
                         scope_hash,
                         metric,
@@ -482,37 +497,36 @@ fn number_kind(data: &AggregatedMetrics) -> u8 {
     }
 }
 
+/// Writes the family name of `metric` into `name` and returns its type and
+/// unit, or `None` if the metric is not supported.
 fn extract_type_unit_and_name(
-    ctx: &mut Context<impl uWrite<Error = std::fmt::Error>>,
+    name: &mut String,
     metric: &Metric,
-) -> bool {
-    let Ok(typ) = get_type(metric.data()) else {
-        return false;
-    };
-    ctx.typ = typ;
-    ctx.unit = get_unit_suffixes(metric.unit());
+) -> Option<(&'static str, Option<Cow<'static, str>>)> {
+    let typ = get_type(metric.data()).ok()?;
+    let unit = get_unit_suffixes(metric.unit());
 
-    ctx.name.clear();
-    let Ok(()) = write_sanitized_name(&mut ctx.name, metric.name(), NameKind::Metric);
+    name.clear();
+    let Ok(()) = write_sanitized_name(name, metric.name(), NameKind::Metric);
     // The family name must not end in `_total`: `write_counter` builds the
     // samples by appending `_total`/`_created` to it. A metric name that already
     // ends in `_total` is stripped here and re-appended by `write_counter`, so
     // the emitted sample name is unchanged.
     // om[related counter.suffix]
     // c[related sum.total-suffix]
-    if ctx.typ == "counter" && ctx.name.ends_with("_total") {
-        ctx.name.truncate(ctx.name.len() - "_total".len());
+    if typ == "counter" && name.ends_with("_total") {
+        name.truncate(name.len() - "_total".len());
     }
     // om[impl metadata.unit-suffix]
     // c[impl metadata.unit-suffix]
-    if let Some(ref unit) = ctx.unit
-        && !ctx.name.ends_with(unit.as_ref())
+    if let Some(ref unit) = unit
+        && !name.ends_with(unit.as_ref())
     {
-        ctx.name.push('_');
-        ctx.name.push_str(unit);
+        name.push('_');
+        name.push_str(unit);
     }
 
-    true
+    Some((typ, unit))
 }
 
 /// Gets the OpenMetrics metric type for this [`AggregatedMetrics`].
@@ -555,14 +569,21 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
     }
 }
 
-/// Write the metadata of the family named in `ctx.name`, with `ctx.typ` and `ctx.unit`.
+/// Write the metadata of `family`.
 // om[impl metadata.order] - TYPE is written first, then UNIT, then HELP
 // om[impl metadata.unique] - at most one TYPE/UNIT/HELP line per family
 #[inline]
-fn write_header<U: uWrite>(ctx: &mut Context<U>, description: &str) -> Result<(), U::Error> {
-    let Context {
-        f, name, unit, typ, ..
-    } = ctx;
+fn write_header<U: uWrite>(
+    family: &mut FamilyContext<'_, U>,
+    description: &str,
+) -> Result<(), U::Error> {
+    let FamilyContext {
+        ctx,
+        name,
+        typ,
+        unit,
+    } = family;
+    let f = &mut ctx.f;
     // c[impl metadata.type]
     // om[impl text.lineending]
     for x in &["# TYPE ", name, " ", typ, "\n"] {
@@ -615,22 +636,22 @@ fn write_otel_scope_info<U: uWrite>(
     Ok(())
 }
 
-/// Writes the points of one metric as a whole family, in the scope set in `ctx`.
+/// Writes the points of one metric as a whole family, in the test scope.
 #[cfg(test)]
 fn write_in_test_scope<M: FamilyMember, U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     metric: &M,
 ) -> Result<(), U::Error> {
-    let scope = (ctx.scope_name, ctx.scope_version);
-    write_points(ctx, &[(scope, metric)])
+    let scope = (family.ctx.scope_name, family.ctx.scope_version);
+    write_points(family, &[(scope, metric)])
 }
 
 #[cfg(test)]
 fn write_values<U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     metric: &AggregatedMetrics,
 ) -> Result<(), U::Error> {
-    write_in_test_scope(ctx, metric)
+    write_in_test_scope(family, metric)
 }
 
 /// The name and version of an instrumentation scope.
@@ -658,19 +679,19 @@ struct LabeledPoint {
 // c[impl resource.attrs] - resource attributes are dropped: labels on metric
 // families carry only point and scope attributes, never resource attributes
 fn write_points<M: FamilyMember, U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     members: &[(ScopeLabels<'_>, &M)],
 ) -> Result<(), U::Error> {
-    // Taken out of `ctx` while the members write, so their capacity is reused.
-    let mut text = std::mem::take(&mut ctx.attr_buffer);
-    let mut points = std::mem::take(&mut ctx.labeled_points);
+    // Taken out of `family` while the members write, so their capacity is reused.
+    let mut text = std::mem::take(&mut family.ctx.attr_buffer);
+    let mut points = std::mem::take(&mut family.ctx.labeled_points);
     text.clear();
     points.clear();
 
     for (member, (scope, data)) in members.iter().enumerate() {
-        data.render_labels(ctx, *scope, member, &mut text, &mut points);
+        data.render_labels(family, *scope, member, &mut text, &mut points);
     }
-    drop_repeated_label_sets(&ctx.name, &text, &mut points, members.len(), |member| {
+    drop_repeated_label_sets(family.name, &text, &mut points, members.len(), |member| {
         members[member].1.hash_points()
     });
 
@@ -680,14 +701,14 @@ fn write_points<M: FamilyMember, U: uWrite>(
     for (member, (_, data)) in members.iter().enumerate() {
         let (own, later) = rest.split_at(rest.partition_point(|p| p.member == member));
         rest = later;
-        written = data.write_labeled(ctx, own, &text);
+        written = data.write_labeled(family, own, &text);
         if written.is_err() {
             break;
         }
     }
 
-    ctx.attr_buffer = text;
-    ctx.labeled_points = points;
+    family.ctx.attr_buffer = text;
+    family.ctx.labeled_points = points;
     written
 }
 
@@ -829,7 +850,7 @@ trait FamilyMember {
     /// in `points`. A point that would shadow a reserved label is skipped.
     fn render_labels<U: uWrite>(
         &self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         scope: ScopeLabels<'_>,
         member: usize,
         text: &mut String,
@@ -842,7 +863,7 @@ trait FamilyMember {
     /// Writes `points` of this metric, in the given order.
     fn write_labeled<U: uWrite>(
         &self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         points: &[LabeledPoint],
         text: &str,
     ) -> Result<(), U::Error>;
@@ -861,7 +882,7 @@ trait DataPoints {
     /// Writes the samples of `points`, each with its rendered label set.
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error>;
 }
@@ -869,26 +890,26 @@ trait DataPoints {
 impl<D: DataPoints> FamilyMember for D {
     fn render_labels<U: uWrite>(
         &self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         (scope_name, scope_version): ScopeLabels<'_>,
         member: usize,
         text: &mut String,
         points: &mut Vec<LabeledPoint>,
     ) {
         // c[impl scope.labels-on-points]
-        let scope_name_attrs = make_scope_name_attrs(ctx.config, scope_name, scope_version);
-        let reserved = reserved_labels(ctx.config, D::HISTOGRAM);
+        let scope_name_attrs = make_scope_name_attrs(family.ctx.config, scope_name, scope_version);
+        let reserved = reserved_labels(family.ctx.config, D::HISTOGRAM);
         let data_points = self.points();
         let count = data_points.size_hint().0;
         points.reserve(count);
         for (index, point) in data_points.enumerate() {
-            if !keeps_reserved_labels(&ctx.name, D::attributes(point), reserved) {
+            if !keeps_reserved_labels(family.name, D::attributes(point), reserved) {
                 continue;
             }
             let start = text.len();
             let Ok(()) = write_attrs_with(
                 text,
-                &mut ctx.label_names,
+                &mut family.ctx.label_names,
                 D::attributes(point).chain(scope_name_attrs.iter()),
             );
             points.push(LabeledPoint {
@@ -915,13 +936,13 @@ impl<D: DataPoints> FamilyMember for D {
 
     fn write_labeled<U: uWrite>(
         &self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         points: &[LabeledPoint],
         text: &str,
     ) -> Result<(), U::Error> {
         let data_points: Vec<_> = self.points().collect();
         self.write_samples(
-            ctx,
+            family,
             points
                 .iter()
                 .map(|p| (data_points[p.point], &text[p.start..p.end])),
@@ -954,13 +975,13 @@ macro_rules! with_data_points {
 impl FamilyMember for AggregatedMetrics {
     fn render_labels<U: uWrite>(
         &self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         scope: ScopeLabels<'_>,
         member: usize,
         text: &mut String,
         points: &mut Vec<LabeledPoint>,
     ) {
-        with_data_points!(self, data => data.render_labels(ctx, scope, member, text, points));
+        with_data_points!(self, data => data.render_labels(family, scope, member, text, points));
     }
 
     fn hash_points(&self) -> Vec<u64> {
@@ -969,11 +990,11 @@ impl FamilyMember for AggregatedMetrics {
 
     fn write_labeled<U: uWrite>(
         &self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         points: &[LabeledPoint],
         text: &str,
     ) -> Result<(), U::Error> {
-        with_data_points!(self, data => data.write_labeled(ctx, points, text))
+        with_data_points!(self, data => data.write_labeled(family, points, text))
     }
 }
 
@@ -1008,10 +1029,10 @@ fn write_bucket_exemplar<'a, E: ExemplarPoint + 'a, U: uWrite>(
 
 #[cfg(test)]
 fn write_histogram<T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     histogram: &Histogram<T>,
 ) -> Result<(), U::Error> {
-    write_in_test_scope(ctx, histogram)
+    write_in_test_scope(family, histogram)
 }
 
 impl<T: Numeric + Copy> DataPoints for Histogram<T> {
@@ -1028,15 +1049,15 @@ impl<T: Numeric + Copy> DataPoints for Histogram<T> {
 
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error> {
-        write_histogram_samples(ctx, self, points)
+        write_histogram_samples(family, self, points)
     }
 }
 
 fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     histogram: &Histogram<T>,
     points: impl Iterator<Item = (&'p HistogramDataPoint<T>, &'p str)>,
 ) -> Result<(), U::Error> {
@@ -1052,9 +1073,9 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
     for (point, attrs) in points {
         // c[impl histogram.created]
         uwriteln!(
-            ctx.f,
+            family.ctx.f,
             "{}_created{{{}}} {} {}"
-            ctx.name,
+            family.name,
             attrs,
             created,
             ts,
@@ -1072,31 +1093,31 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
         if has_sum {
             // c[impl histogram.count] - except without a sum, where OpenMetrics forbids it
             uwriteln!(
-                ctx.f,
+                family.ctx.f,
                 "{}_count{{{}}} {} {}",
-                ctx.name,
+                family.name,
                 attrs,
                 point.count().fast_display(),
                 ts
             )?;
             uwriteln!(
-                ctx.f,
+                family.ctx.f,
                 "{}_sum{{{}}} {} {}",
-                ctx.name,
+                family.name,
                 attrs,
                 point.sum().fast_display(),
                 ts,
             )?;
         }
 
-        if ctx.config.histogram_min_max {
+        if family.ctx.config.histogram_min_max {
             // Non-compliant but useful
             // TODO: Expose as a separate gauge?
             if let Some(min) = point.min() {
                 uwriteln!(
-                    ctx.f,
+                    family.ctx.f,
                     "{}_min{{{}}} {} {}",
-                    ctx.name,
+                    family.name,
                     attrs,
                     min.fast_display(),
                     ts,
@@ -1104,9 +1125,9 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             }
             if let Some(max) = point.max() {
                 uwriteln!(
-                    ctx.f,
+                    family.ctx.f,
                     "{}_max{{{}}} {} {}",
-                    ctx.name,
+                    family.name,
                     attrs,
                     max.fast_display(),
                     ts,
@@ -1122,9 +1143,9 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             // c[impl histogram.bucket.le]
             uwrite!(
                 // Not using write! here is a ~19% speedup
-                ctx.f,
+                family.ctx.f,
                 "{}_bucket{{{}{}le=\"{}\"}} {} {}",
-                ctx.name,
+                family.name,
                 attrs,
                 le_separator,
                 bound.fast_display(),
@@ -1136,33 +1157,33 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             // c[impl exemplar.bucket-single]
             // c[impl histogram.bucket.exemplar] - a single exemplar per `le`
             // bucket, attached to no other `le`-labelled point
-            write_bucket_exemplar(&mut ctx.f, &bounds, i, point.exemplars())?;
-            ctx.f.write_char('\n')?;
+            write_bucket_exemplar(&mut family.ctx.f, &bounds, i, point.exemplars())?;
+            family.ctx.f.write_char('\n')?;
         }
         // om[impl histogram.inf-bucket]
         // c[impl histogram.bucket.inf]
         uwrite!(
-            ctx.f,
+            family.ctx.f,
             "{}_bucket{{{}{}le=\"+Inf\"}} {} {}",
-            ctx.name,
+            family.name,
             attrs,
             le_separator,
             point.count().fast_display(),
             ts,
         )?;
         // Exemplars above the last finite bound belong to the +Inf bucket.
-        write_bucket_exemplar(&mut ctx.f, &bounds, bounds.len(), point.exemplars())?;
-        ctx.f.write_char('\n')?;
+        write_bucket_exemplar(&mut family.ctx.f, &bounds, bounds.len(), point.exemplars())?;
+        family.ctx.f.write_char('\n')?;
     }
     Ok(())
 }
 
 #[cfg(test)]
 fn write_counter<T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     sum: &Sum<T>,
 ) -> Result<(), U::Error> {
-    write_in_test_scope(ctx, sum)
+    write_in_test_scope(family, sum)
 }
 
 impl<T: Numeric + Copy> DataPoints for Sum<T> {
@@ -1179,15 +1200,15 @@ impl<T: Numeric + Copy> DataPoints for Sum<T> {
 
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error> {
-        write_counter_samples(ctx, self, points)
+        write_counter_samples(family, self, points)
     }
 }
 
 fn write_counter_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     sum: &Sum<T>,
     points: impl Iterator<Item = (&'p SumDataPoint<T>, &'p str)>,
 ) -> Result<(), U::Error> {
@@ -1205,9 +1226,9 @@ fn write_counter_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             // c[impl sum.created]
             // om[impl counter.suffix]
             uwriteln!(
-                ctx.f,
+                family.ctx.f,
                 "{}_created{{{}}} {} {}",
-                ctx.name,
+                family.name,
                 attrs,
                 created,
                 ts
@@ -1216,30 +1237,30 @@ fn write_counter_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             // `extract_type_unit_and_name`), so the `_total` suffix is always
             // appended to the value sample.
             uwrite!(
-                ctx.f,
+                family.ctx.f,
                 "{}_total{{{}}} {} {}",
-                ctx.name,
+                family.name,
                 attrs,
                 point.value().fast_display(),
                 ts,
             )?;
             // c[impl exemplar.types] - exemplars on monotonic sums are converted
-            write_exemplar(&mut ctx.f, point.exemplars())?;
-            ctx.f.write_char('\n')?;
+            write_exemplar(&mut family.ctx.f, point.exemplars())?;
+            family.ctx.f.write_char('\n')?;
         }
     } else {
         for (point, attrs) in points {
             // c[impl exemplar.types] - exemplars on non-monotonic sums (gauges)
             // are dropped
             uwrite!(
-                ctx.f,
+                family.ctx.f,
                 "{}{{{}}} {} {}",
-                ctx.name,
+                family.name,
                 attrs,
                 point.value().fast_display(),
                 ts,
             )?;
-            ctx.f.write_char('\n')?;
+            family.ctx.f.write_char('\n')?;
         }
     }
     Ok(())
@@ -1247,10 +1268,10 @@ fn write_counter_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
 
 #[cfg(test)]
 fn write_gauge<T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<U>,
+    family: &mut FamilyContext<'_, U>,
     gauge: &Gauge<T>,
 ) -> Result<(), U::Error> {
-    write_in_test_scope(ctx, gauge)
+    write_in_test_scope(family, gauge)
 }
 
 impl<T: Numeric + Copy> DataPoints for Gauge<T> {
@@ -1267,21 +1288,21 @@ impl<T: Numeric + Copy> DataPoints for Gauge<T> {
 
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<U>,
+        family: &mut FamilyContext<'_, U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error> {
         let ts = to_timestamp(self.time());
         for (point, attrs) in points {
             // c[impl exemplar.types] - exemplars on gauges are dropped
             uwrite!(
-                ctx.f,
+                family.ctx.f,
                 "{}{{{}}} {} {}",
-                ctx.name,
+                family.name,
                 attrs,
                 point.value().fast_display(),
                 ts,
             )?;
-            ctx.f.write_char('\n')?;
+            family.ctx.f.write_char('\n')?;
         }
         Ok(())
     }
