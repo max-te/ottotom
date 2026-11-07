@@ -19,18 +19,22 @@ rust = "latest"
 "cargo:bacon" = "latest"
 "cargo:git-cliff" = "latest"
 "cargo:prek" = "latest"
+# Matches the `ephyra` library in ephyra-tests; bump both together.
+"cargo:ephyra-cli" = "0.0.1"
 
 [env]
 CARGO_TERM_COLOR = "always"
 
 [tasks.coverage]
 description = "Run code coverage across every feature combination"
+# A fixed seed, so the property tests cover the same inputs in every run.
+env = { EPHYRA_SEED = "1" }
 run = [
   "cargo llvm-cov clean --workspace",
-  "cargo hack --feature-powerset --workspace --exclude ottotom-ephyra-tests llvm-cov --no-report nextest",
-  "cargo llvm-cov report --lcov --output-path target/lcov.info",
-  "cargo llvm-cov report --html --output-dir target/coverage",
-  "cargo llvm-cov report",
+  "cargo hack --feature-powerset --workspace llvm-cov --no-report nextest",
+  "cargo llvm-cov report --lcov --output-path target/lcov.info --ignore-filename-regex 'kache/'",
+  "cargo llvm-cov report --html --output-dir target/coverage --ignore-filename-regex 'kache/'",
+  "cargo llvm-cov report --ignore-filename-regex 'kache/'",
 ]
 
 [tasks.check]
@@ -43,7 +47,8 @@ run = "cargo +nightly fmt"
 
 [tasks.test]
 description = "Run all tests with cargo nextest"
-run = "cargo nextest run"
+env = { EPHYRA_SEED = "1" }
+run = "cargo nextest run --workspace"
 
 [tasks.test-all-features]
 description = "Run tests across every feature combination, except the property tests"
@@ -62,6 +67,15 @@ run = "cargo test --profile ephyra --locked -p ottotom-ephyra-tests"
 description = "Search for property test counterexamples with a random seed"
 env = { EPHYRA_TESTS = "20000", EPHYRA_FAILURES = "12" }
 run = "cargo test --profile ephyra --locked -p ottotom-ephyra-tests"
+
+[tasks.ephyra-check]
+description = "Verify the ephyra generators"
+# ephyra resolves `.ephyra/` against the working directory.
+dir = "ephyra-tests"
+# ephyra runs some test binaries itself, outside cargo's `[env]`, so the
+# variable must be set before it starts.
+env = { LLVM_PROFILE_FILE = "{{config_root}}/target/profraw/%m_%p.profraw" }
+run = "ephyra check"
 
 [tasks.doc]
 description = "Build and open documentation"
