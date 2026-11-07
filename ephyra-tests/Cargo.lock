@@ -255,6 +255,7 @@ dependencies = [
  "opentelemetry_sdk",
  "ottotom",
  "ottotom-testsupport",
+ "tracing",
 ]
 
 [[package]]

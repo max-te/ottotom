@@ -20,6 +20,7 @@ ephyra = "0.0.1"
 
 [dev-dependencies]
 openmetrics-parser = "0.4.4"
+tracing = "0.1.44"
 
 [profile.release]
 debug-assertions = true
