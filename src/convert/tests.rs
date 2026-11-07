@@ -1174,3 +1174,90 @@ fn test_scope_order_does_not_depend_on_creation_order() {
     };
     assert_eq!(info_lines(&ascending), info_lines(&descending));
 }
+
+fn scope(name: &'static str) -> InstrumentationScope {
+    InstrumentationScope::builder(name).build()
+}
+
+#[test]
+// c[verify metadata.no-duplicates]
+// c[verify metadata.conflict-keep-points]
+// om[verify metadata.unique]
+fn test_one_metric_name_in_two_scopes_is_one_family() {
+    let metrics = collect_from_scopes([scope("one"), scope("two")], |meters| {
+        meters[0].u64_counter("requests").build().add(1, &[]);
+        meters[1].u64_counter("requests").build().add(2, &[]);
+    });
+    let text = metrics.to_openmetrics_string().unwrap();
+    assert_eq!(
+        type_lines(&text),
+        [
+            "# TYPE target info",
+            "# TYPE otel_scope info",
+            "# TYPE requests counter"
+        ],
+        "{text}"
+    );
+    assert!(
+        text.contains("requests_total{otel_scope_name=\"one\"} 1 "),
+        "{text}"
+    );
+    assert!(
+        text.contains("requests_total{otel_scope_name=\"two\"} 2 "),
+        "{text}"
+    );
+}
+
+#[test]
+// c[verify metadata.no-duplicates]
+fn test_one_metric_name_with_two_number_types_is_one_family() {
+    let metrics = collect_metrics(|meter| {
+        meter.u64_counter("a").build().add(1, &[]);
+        meter.f64_counter("a").build().add(1.5, &[]);
+    });
+    let config = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+    assert_eq!(type_lines(&text), ["# TYPE a counter"], "{text}");
+    assert!(text.contains("a_total{} 1.5 "), "{text}");
+    assert!(text.contains("a_total{} 1 "), "{text}");
+}
+
+#[test]
+// c[verify metadata.conflict-type]
+fn test_metrics_of_conflicting_types_keep_the_first_type() {
+    let metrics = collect_metrics(|meter| {
+        meter.u64_gauge("a").build().record(7, &[]);
+        meter.u64_counter("a").build().add(1, &[]);
+    });
+    let config = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+    // `counter` orders before `gauge`, so the counter is written and the gauge dropped.
+    assert_eq!(type_lines(&text), ["# TYPE a counter"], "{text}");
+    assert!(!text.contains(" 7 "), "{text}");
+}
+
+#[test]
+// c[verify metadata.conflict-unit-help]
+fn test_family_keeps_the_first_help() {
+    let metrics = collect_from_scopes([scope("one"), scope("two")], |meters| {
+        meters[0]
+            .u64_counter("a")
+            .with_description("first")
+            .build()
+            .add(1, &[]);
+        meters[1]
+            .u64_counter("a")
+            .with_description("second")
+            .build()
+            .add(1, &[]);
+    });
+    let text = metrics.to_openmetrics_string().unwrap();
+    let help: Vec<&str> = text.lines().filter(|l| l.starts_with("# HELP ")).collect();
+    assert_eq!(help, ["# HELP a first"], "{text}");
+}
