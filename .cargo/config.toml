@@ -1,0 +1,5 @@
+[env]
+# Keeps profiles from instrumented `ephyra check` builds out of the source tree,
+# wherever cargo runs. `cargo llvm-cov` sets its own LLVM_PROFILE_FILE, which
+# takes precedence over this table.
+LLVM_PROFILE_FILE = { value = "target/profraw/%m_%p.profraw", relative = true }
