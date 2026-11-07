@@ -221,17 +221,47 @@ impl WriteOpenMetrics for ResourceMetrics {
 
         let Plan { names, mut members } = Plan::new(&mut ctx, &scopes);
         let family_name = |member: &Member<'_>| &names[member.family.0..member.family.1];
+        // Each family as the range of its members; the plan is ordered by
+        // family name, so a family's members are adjacent.
+        let mut spans = Vec::new();
         let mut start = 0;
-        // om[impl metricfamily.nointerleave] - each MetricFamily is fully written before the next
         while start < members.len() {
-            // The plan is ordered by family name, so a family's members are adjacent.
             let name = family_name(&members[start]);
             let len = members[start..]
                 .iter()
                 .take_while(|member| family_name(member) == name)
                 .count();
-            let family = &mut members[start..start + len];
+            spans.push(start..start + len);
             start += len;
+        }
+
+        // The info families are written first, so their names are claimed first.
+        let mut families: Vec<(&str, &'static str)> = Vec::with_capacity(spans.len() + 2);
+        if ctx.config.target_info_enabled {
+            families.push(("target", "info"));
+        }
+        if ctx.config.scope_info_enabled {
+            families.push(("otel_scope", "info"));
+        }
+        let info_families = families.len();
+        families.extend(
+            spans
+                .iter()
+                .map(|span| (family_name(&members[span.start]), members[span.start].typ)),
+        );
+        let clashes = find_name_clashes(&families);
+
+        // om[impl metricfamily.nointerleave] - each MetricFamily is fully written before the next
+        for (span, clashes) in spans.into_iter().zip(&clashes[info_families..]) {
+            let family = &mut members[span];
+            let name = family_name(&family[0]);
+            if *clashes {
+                // c[impl metadata.drop-warn]
+                warn!(
+                    "Dropping family {name}: one of its sample names is already written by another family"
+                );
+                continue;
+            }
 
             // c[impl metadata.conflict-type] - the plan orders by type within a
             // family, so the first member's type wins
@@ -357,6 +387,82 @@ impl<'m> Plan<'m> {
         });
         Plan { names, members }
     }
+}
+
+/// The sample names a family of type `typ` writes, as suffixes of its name.
+fn sample_suffixes(typ: &str) -> &'static [&'static str] {
+    match typ {
+        "counter" => &["_total", "_created"],
+        "histogram" => &["_bucket", "_count", "_sum", "_created"],
+        "info" => &["_info"],
+        _ => &[""],
+    }
+}
+
+/// For each family in `families` (name and type, in writing order), whether it
+/// must be dropped because a family written before it already uses its family
+/// name or one of its sample names.
+// om[impl metricfamily.name-clash]
+fn find_name_clashes(families: &[(&str, &'static str)]) -> Vec<bool> {
+    /// A name a family writes: its family name (`is_sample == false`, empty
+    /// suffix) or one of its sample names. The name is the family name
+    /// followed by `suffix`, compared without being built.
+    struct Claim {
+        is_sample: bool,
+        family: usize,
+        suffix: &'static str,
+        /// position before sorting, to look up `run_of` per family
+        position: usize,
+    }
+
+    let mut claims = Vec::new();
+    let mut first_claim = Vec::with_capacity(families.len() + 1);
+    for (family, &(_, typ)) in families.iter().enumerate() {
+        first_claim.push(claims.len());
+        let names =
+            std::iter::once((false, "")).chain(sample_suffixes(typ).iter().map(|s| (true, *s)));
+        for (is_sample, suffix) in names {
+            let position = claims.len();
+            claims.push(Claim {
+                is_sample,
+                family,
+                suffix,
+                position,
+            });
+        }
+    }
+    first_claim.push(claims.len());
+
+    let text = |claim: &Claim| families[claim.family].0.bytes().chain(claim.suffix.bytes());
+    claims.sort_by(|a, b| {
+        a.is_sample
+            .cmp(&b.is_sample)
+            .then_with(|| text(a).cmp(text(b)))
+    });
+    // Claims of one name share a run id.
+    let mut run_of = vec![0; claims.len()];
+    let mut run = 0;
+    for (i, claim) in claims.iter().enumerate() {
+        if i > 0
+            && (claims[i - 1].is_sample != claim.is_sample || !text(&claims[i - 1]).eq(text(claim)))
+        {
+            run += 1;
+        }
+        run_of[claim.position] = run;
+    }
+
+    // A family is written only if none of its names is taken; then it takes them all.
+    let mut taken = vec![false; run + 1];
+    (0..families.len())
+        .map(|family| {
+            let runs = &run_of[first_claim[family]..first_claim[family + 1]];
+            let clashes = runs.iter().any(|&run| taken[run]);
+            if !clashes {
+                runs.iter().for_each(|&run| taken[run] = true);
+            }
+            clashes
+        })
+        .collect()
 }
 
 /// Orders metrics of one name that differ only in their number type.

@@ -1261,3 +1261,60 @@ fn test_family_keeps_the_first_help() {
     let help: Vec<&str> = text.lines().filter(|l| l.starts_with("# HELP ")).collect();
     assert_eq!(help, ["# HELP a first"], "{text}");
 }
+
+#[test]
+// om[verify metricfamily.name-clash]
+fn test_family_with_a_clashing_sample_name_is_dropped() {
+    let metrics = collect_metrics(|meter| {
+        meter.u64_counter("a").build().add(1, &[]);
+        meter.u64_gauge("a_total").build().record(7, &[]);
+    });
+    let config = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+    // `a` orders before `a_total`, so the counter keeps the sample name `a_total`.
+    assert_eq!(type_lines(&text), ["# TYPE a counter"], "{text}");
+    assert!(!text.contains(" 7 "), "{text}");
+}
+
+#[test]
+// om[verify metricfamily.name-clash]
+fn test_family_clashing_with_target_info_is_dropped() {
+    let metrics = collect_metrics(|meter| meter.u64_gauge("target_info").build().record(7, &[]));
+
+    let with_target_info = Config::builder().scope_info_enabled(false).build();
+    let text = metrics
+        .to_openmetrics_string_with_config(with_target_info)
+        .unwrap();
+    assert_eq!(type_lines(&text), ["# TYPE target info"], "{text}");
+
+    let without_target_info = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let text = metrics
+        .to_openmetrics_string_with_config(without_target_info)
+        .unwrap();
+    assert_eq!(type_lines(&text), ["# TYPE target_info gauge"], "{text}");
+}
+
+#[test]
+fn test_families_without_a_shared_sample_name_are_kept() {
+    // Histogram `a` writes `a_count`; counter `a_count` writes `a_count_total`.
+    let metrics = collect_metrics(|meter| {
+        meter.u64_histogram("a").build().record(1, &[]);
+        meter.u64_counter("a_count").build().add(1, &[]);
+    });
+    let config = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+    assert_eq!(
+        type_lines(&text),
+        ["# TYPE a histogram", "# TYPE a_count counter"],
+        "{text}"
+    );
+}
