@@ -34,12 +34,18 @@ run = [
 ]
 
 [tasks.check]
-description = "Check the workspace for compilation errors"
-run = "cargo check --all"
+description = "Check the workspace and the property tests for compilation errors"
+run = [
+  "cargo check --all",
+  "cargo check --all-targets --locked --manifest-path ephyra-tests/Cargo.toml",
+]
 
 [tasks.format]
 description = "Format all Rust source files with nightly rustfmt"
-run = "cargo +nightly fmt"
+run = [
+  "cargo +nightly fmt",
+  "cargo +nightly fmt --manifest-path ephyra-tests/Cargo.toml",
+]
 
 [tasks.test]
 description = "Run all tests with cargo nextest"
