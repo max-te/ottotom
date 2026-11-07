@@ -284,6 +284,10 @@ impl WriteOpenMetrics for ResourceMetrics {
             if *clashes {
                 // c[impl metadata.drop-warn]
                 warn!(
+                    points = family
+                        .iter()
+                        .map(|member| point_count(member.metric.data()))
+                        .sum::<usize>(),
                     "Dropping family {name}: one of its sample names is already written by another family"
                 );
                 continue;
@@ -309,6 +313,7 @@ impl WriteOpenMetrics for ResourceMetrics {
                 if member.typ != typ {
                     // c[impl metadata.drop-warn]
                     warn!(
+                        points = point_count(member.metric.data()),
                         "Dropping metric {:?}: family {name} is already of type {typ}, not {}",
                         member.metric.name(),
                         member.typ
@@ -386,7 +391,10 @@ impl<'m> Plan<'m> {
                     });
                 } else {
                     // c[impl metadata.drop-warn]
-                    warn!("Unsupported metric type {metric:?}");
+                    warn!(
+                        points = point_count(metric.data()),
+                        "Unsupported metric type {metric:?}"
+                    );
                 }
             }
         }
@@ -483,6 +491,23 @@ fn find_name_clashes(families: &[(&str, &'static str)]) -> Vec<bool> {
             clashes
         })
         .collect()
+}
+
+/// The number of data points in `data`, which a dropping warning reports.
+fn point_count(data: &AggregatedMetrics) -> usize {
+    fn count<T>(data: &MetricData<T>) -> usize {
+        match data {
+            MetricData::Gauge(gauge) => gauge.data_points().count(),
+            MetricData::Sum(sum) => sum.data_points().count(),
+            MetricData::Histogram(histogram) => histogram.data_points().count(),
+            MetricData::ExponentialHistogram(histogram) => histogram.data_points().count(),
+        }
+    }
+    match data {
+        AggregatedMetrics::F64(data) => count(data),
+        AggregatedMetrics::U64(data) => count(data),
+        AggregatedMetrics::I64(data) => count(data),
+    }
 }
 
 /// Orders metrics of one name that differ only in their number type.
@@ -775,7 +800,10 @@ fn drop_repeated_label_sets(
         };
         for _ in 1..len {
             // c[impl metadata.drop-warn]
-            warn!("Dropping a point of {family}: its label set {{{labels}}} is already written");
+            warn!(
+                points = 1,
+                "Dropping a point of {family}: its label set {{{labels}}} is already written"
+            );
         }
         points[kept] = survivor;
         kept += 1;
@@ -1380,6 +1408,7 @@ fn keeps_reserved_labels<'a>(
     };
     // c[impl metadata.drop-warn]
     warn!(
+        points = 1,
         "Dropping a point of {metric}: its attribute {:?} would be written as the reserved label `{label}`",
         kv.key.as_str()
     );
