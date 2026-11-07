@@ -146,6 +146,8 @@ struct Context<W: uWrite> {
     labeled_points: Vec<LabeledPoint>,
     /// scratch space for sanitized label names, reused across points
     label_names: String,
+    /// the `le` labels of the last histogram point
+    le_labels: LeLabels,
     /// the scope that tests write single metrics in
     #[cfg(test)]
     scope_name: &'static str,
@@ -166,6 +168,7 @@ impl<'f, W: Write> Context<WriteAsUWrite<'f, W>> {
             attr_buffer: String::with_capacity(256),
             labeled_points: Vec::new(),
             label_names: String::with_capacity(64),
+            le_labels: LeLabels::default(),
             #[cfg(test)]
             scope_name: "",
             #[cfg(test)]
@@ -1113,6 +1116,58 @@ impl<T: Numeric + Copy> DataPoints for Histogram<T> {
     }
 }
 
+/// The bounds of the last histogram point, with their `le` label values. All
+/// points of one histogram share their bounds, so the labels are rendered once.
+#[derive(Default)]
+struct LeLabels {
+    bounds: Vec<f64>,
+    /// the label values, back to back
+    text: String,
+    /// where each label value ends in `text`
+    ends: Vec<usize>,
+}
+
+impl LeLabels {
+    /// Makes the labels those of `bounds`, rendering only the bounds that changed.
+    fn update(&mut self, bounds: impl Iterator<Item = f64>) {
+        if self.bounds.capacity() == 0 {
+            // Most labels are short, such as `0.005` or `1e+06`.
+            let count = bounds.size_hint().0;
+            self.bounds.reserve(count);
+            self.ends.reserve(count);
+            self.text.reserve(count * 8);
+        }
+        let mut len = 0;
+        for bound in bounds {
+            // Bits, not `==`: 0.0 and -0.0 are equal but render differently.
+            let kept = self
+                .bounds
+                .get(len)
+                .is_some_and(|b| b.to_bits() == bound.to_bits());
+            if !kept {
+                self.truncate(len);
+                self.bounds.push(bound);
+                let Ok(()) = uwrite!(self.text, "{}", canonical_display(bound));
+                self.ends.push(self.text.len());
+            }
+            len += 1;
+        }
+        self.truncate(len);
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.bounds.truncate(len);
+        self.ends.truncate(len);
+        self.text.truncate(self.ends.last().copied().unwrap_or(0));
+    }
+
+    /// The `le` label value of the `i`-th bound.
+    fn label(&self, i: usize) -> &str {
+        let start = if i == 0 { 0 } else { self.ends[i - 1] };
+        &self.text[start..self.ends[i]]
+    }
+}
+
 fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
     family: &mut FamilyContext<'_, U>,
     histogram: &Histogram<T>,
@@ -1139,7 +1194,9 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
         )?;
 
         // c[impl histogram.bucket]
-        let bounds: Vec<_> = point.bounds().collect();
+        family.ctx.le_labels.update(point.bounds());
+        let le_labels = &family.ctx.le_labels;
+        let bounds = le_labels.bounds.as_slice();
         // c[impl histogram.sum] - {name}_sum only if the sum is positive and monotonic
         // om[impl histogram.negative-threshold-nosum]
         // TODO: monitor if opentelmetry-sdk introduces positive f64 histograms?
@@ -1194,7 +1251,7 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
 
         let le_separator = if attrs.is_empty() { "" } else { "," };
         let mut cumulative_count = 0;
-        for (i, (bound, count)) in std::iter::zip(&bounds, point.bucket_counts()).enumerate() {
+        for (i, count) in point.bucket_counts().take(bounds.len()).enumerate() {
             // c[impl histogram.bucket.cumulative]
             cumulative_count += count;
             // c[impl histogram.bucket.le]
@@ -1207,7 +1264,7 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
                 family.name,
                 attrs,
                 le_separator,
-                canonical_display(*bound),
+                le_labels.label(i),
                 cumulative_count.fast_display(),
                 ts,
             )?;
@@ -1216,7 +1273,7 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             // c[impl exemplar.bucket-single]
             // c[impl histogram.bucket.exemplar] - a single exemplar per `le`
             // bucket, attached to no other `le`-labelled point
-            write_bucket_exemplar(&mut family.ctx.f, &bounds, i, point.exemplars())?;
+            write_bucket_exemplar(&mut family.ctx.f, bounds, i, point.exemplars())?;
             family.ctx.f.write_char('\n')?;
         }
         // om[impl histogram.inf-bucket]
@@ -1231,7 +1288,7 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             ts,
         )?;
         // Exemplars above the last finite bound belong to the +Inf bucket.
-        write_bucket_exemplar(&mut family.ctx.f, &bounds, bounds.len(), point.exemplars())?;
+        write_bucket_exemplar(&mut family.ctx.f, bounds, bounds.len(), point.exemplars())?;
         family.ctx.f.write_char('\n')?;
     }
     Ok(())

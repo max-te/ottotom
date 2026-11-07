@@ -45,7 +45,9 @@ impl uDisplay for CanonicalDisplay {
     where
         W: ufmt::uWrite + ?Sized,
     {
-        if !self.0.is_finite() {
+        // In this range, and for non-finite values, ryu already writes the
+        // canonical form: fixed notation with at least one decimal.
+        if !self.0.is_finite() || self.0 == 0.0 || (1e-4..1e6).contains(&self.0.abs()) {
             return RyuDisplay(self.0).fmt(f);
         }
         let mut buffer = ryu::Buffer::new();
