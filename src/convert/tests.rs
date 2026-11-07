@@ -335,9 +335,9 @@ fn test_make_scope_name_attrs() {
 
     let disabled = Config::builder().scope_info_enabled(false).build();
     let attrs = make_scope_name_attrs(disabled, scope_name, None);
-    assert!(attrs.is_empty());
+    assert_eq!(attrs, [] as [KeyValue; 0]);
     let attrs = make_scope_name_attrs(disabled, scope_name, Some(scope_version));
-    assert!(attrs.is_empty());
+    assert_eq!(attrs, [] as [KeyValue; 0]);
 }
 
 #[test]
@@ -1607,8 +1607,8 @@ fn test_le_labels_follow_changing_bounds() {
     le.update([-0.0, 7.0, 1e-5, 8.0].into_iter());
     assert_eq!(labels(&le), ["-0.0", "7.0", "1e-05", "8.0"]);
     le.update(std::iter::empty());
-    assert!(labels(&le).is_empty());
-    assert!(le.text.is_empty());
+    assert_eq!(labels(&le), [] as [String; 0]);
+    assert_eq!(le.text, "");
 }
 
 #[test]
