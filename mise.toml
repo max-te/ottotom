@@ -53,6 +53,18 @@ run = "cargo hack --feature-powerset --workspace nextest run"
 description = "Lint every feature combination, warnings are errors"
 run = "cargo hack --feature-powerset --workspace clippy --all-targets -- -D warnings"
 
+[tasks.ephyra]
+description = "Run the ephyra property tests with CI's fixed seed"
+dir = "ephyra-tests"
+env = { EPHYRA_SEED = "1" }
+run = "cargo test --release --locked"
+
+[tasks.ephyra-search]
+description = "Search for property test counterexamples with a random seed"
+dir = "ephyra-tests"
+env = { EPHYRA_TESTS = "20000", EPHYRA_FAILURES = "12" }
+run = "cargo test --release --locked"
+
 [tasks.doc]
 description = "Build and open documentation"
 run = "cargo doc --all --no-deps --open"
