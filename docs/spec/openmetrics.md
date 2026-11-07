@@ -63,6 +63,12 @@ A Histogram's Metric's LabelSet MUST NOT have a `le` label name.
 om[histogram.nonanneg]
 Sum and bucket values MUST NOT be NaN or negative.
 
+om[histogram.negative-threshold-nosum]
+Negative threshold buckets MAY be used, but then the Histogram MetricPoint MUST NOT contain a sum value as it would no longer be a counter semantically.
+
+om[histogram.count-iff-sum]
+If and only if a Sum Value is present in a MetricPoint, then the MetricPoint's +Inf Bucket value MUST also appear in a Sample with a MetricName with the suffix `_count`.
+
 om[histogram.threshold-nonan]
 Bucket thresholds MUST NOT equal NaN.
 

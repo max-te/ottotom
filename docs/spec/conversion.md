@@ -13,6 +13,9 @@ Exporters MUST drop entire metrics to prevent conflicting TYPE comments.
 c[metadata.conflict-unit-help]
 All but one of conflicting UNIT and HELP comments (but not metric points) SHOULD be dropped.
 
+c[metadata.conflict-keep-points]
+Exporters SHOULD NOT drop metric points as a result of conflicting UNIT or HELP comments.
+
 c[metadata.drop-warn]
 If dropping a comment or metric points, the exporter SHOULD warn the user through error logging.
 
