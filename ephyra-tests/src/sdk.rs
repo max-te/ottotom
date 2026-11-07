@@ -218,7 +218,9 @@ impl Handle {
     fn record(&self, record: &Record, attrs: &[KeyValue]) {
         match self {
             Handle::U64Counter(c) => c.add(record.int.unsigned_abs(), attrs),
-            Handle::F64Counter(c) => c.add(record.float.abs(), attrs),
+            // Negative and non-finite increments too: the API does not
+            // validate them, so programs can record them.
+            Handle::F64Counter(c) => c.add(record.float, attrs),
             Handle::I64UpDownCounter(c) => c.add(record.int, attrs),
             Handle::F64UpDownCounter(c) => c.add(record.float, attrs),
             Handle::U64Gauge(g) => g.record(record.int.unsigned_abs(), attrs),
