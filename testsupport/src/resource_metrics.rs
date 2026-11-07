@@ -36,6 +36,33 @@ pub fn collect_metrics(record: impl FnOnce(&Meter)) -> ResourceMetrics {
     metrics
 }
 
+/// Like [`collect_metrics`], but with one meter per scope in `scopes`, passed
+/// to `record` in the same order.
+pub fn collect_from_scopes(
+    scopes: impl IntoIterator<Item = InstrumentationScope>,
+    record: impl FnOnce(&[Meter]),
+) -> ResourceMetrics {
+    let reader = TestMetricsReader::default();
+    let meter_provider = SdkMeterProvider::builder()
+        .with_resource(
+            Resource::builder_empty()
+                .with_service_name("ottotom-testsupport")
+                .build(),
+        )
+        .with_reader(reader.clone())
+        .build();
+    let meters: Vec<Meter> = scopes
+        .into_iter()
+        .map(|scope| meter_provider.meter_with_scope(scope))
+        .collect();
+
+    record(&meters);
+
+    let mut metrics = ResourceMetrics::default();
+    reader.collect(&mut metrics).unwrap();
+    metrics
+}
+
 /// A monotonic sum named `http.server.requests`, scaled to `points` distinct
 /// attribute sets.
 pub fn counter_metrics(points: usize) -> ResourceMetrics {
