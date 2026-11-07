@@ -22,7 +22,7 @@ unsafe_code = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-# The `_ => unimplemented!()` arms in `write_values` are deliberate: they are
+# The `_ => unimplemented!()` arms in `with_data_points!` are deliberate: they are
 # what keeps a new `MetricData` variant in the SDK from being a compile error.
 match_wildcard_for_single_variants = "allow"
 # Metric values are compared against histogram bucket bounds, which the SDK

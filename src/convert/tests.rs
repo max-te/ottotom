@@ -670,7 +670,7 @@ fn make_f64_histogram_with_bounds(bounds: Vec<f64>, value: f64) -> Histogram<f64
     });
     metrics
         .scope_metrics()
-        .flat_map(|scope| scope.metrics())
+        .flat_map(ScopeMetrics::metrics)
         .find_map(|metric| Histogram::<f64>::from_aggregated(metric.data()).cloned())
         .expect("the histogram was recorded")
 }
@@ -1422,7 +1422,7 @@ fn test_drop_repeated_label_sets_keeps_first_member_then_smallest_hash() {
         point(0, 1, 10),
         point(0, 0, 15),
     ];
-    drop_repeated_label_sets("f", text, &mut points, |member| {
+    drop_repeated_label_sets("f", text, &mut points, 2, |member| {
         assert_eq!(member, 0, "only member 0 holds a repeat of its own");
         vec![0, 9, 0, 5]
     });
@@ -1434,11 +1434,11 @@ fn test_drop_repeated_label_sets_keeps_first_member_then_smallest_hash() {
 fn test_sort_by_label_set_orders_as_bytes_do() {
     // Label sets from a small alphabet with NUL, around the 8-byte key boundaries.
     let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-    let mut random = |bound: u64| {
+    let mut random = |bound: u8| {
         seed ^= seed << 13;
         seed ^= seed >> 7;
         seed ^= seed << 17;
-        seed % bound
+        usize::try_from(seed % u64::from(bound)).expect("below a u8 bound")
     };
     for prefix in ["", "otel_scope_name=\"ottotom.bench\",system_device=\"dev"] {
         let mut text = String::new();
@@ -1457,11 +1457,9 @@ fn test_sort_by_label_set_orders_as_bytes_do() {
         };
         push(&mut text, 0, "otel_metric_overflow=\"true\"");
         for _ in 0..500 {
-            let len = random(20) as usize;
-            let suffix: String = (0..len)
-                .map(|_| ['\0', 'a', 'b'][random(3) as usize])
-                .collect();
-            push(&mut text, random(3) as usize, &format!("{prefix}{suffix}"));
+            let len = random(20);
+            let suffix: String = (0..len).map(|_| ['\0', 'a', 'b'][random(3)]).collect();
+            push(&mut text, random(3), &format!("{prefix}{suffix}"));
         }
         // Label sets that share their bytes in steps of 8 reach the depth limit.
         for steps in 0..40 {
