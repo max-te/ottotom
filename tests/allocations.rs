@@ -1,4 +1,5 @@
-//! Guards that the conversion allocates nothing per data point.
+//! Guards that the conversion's allocations amortize: they must not grow with
+//! the number of data points.
 //!
 //! Counting allocations needs a global allocator, which needs `unsafe`, which
 //! the workspace otherwise denies. The allocator lives in its own test binary
@@ -44,18 +45,28 @@ fn allocations_converting(metrics: &ResourceMetrics) -> usize {
     ALLOCATIONS.load(Ordering::Relaxed) - before
 }
 
+/// Allocations that converting more points may add, because buffers grow when
+/// an estimate of their size falls short. One allocation per point would add
+/// hundreds.
+const GROWTH_ALLOWANCE: usize = 8;
+
+/// Asserts that 1024 points cost at most a few allocations more than 64. The
+/// SDK keeps at most 2000 attribute sets per instrument.
+fn assert_allocations_amortize(metrics: fn(usize) -> ResourceMetrics) {
+    let (small, large) = (64, 1024);
+    let added_allocations =
+        allocations_converting(&metrics(large)) - allocations_converting(&metrics(small));
+    assert!(
+        added_allocations <= GROWTH_ALLOWANCE,
+        "{added_allocations} allocations for {} added points",
+        large - small
+    );
+}
+
 /// Measured on gauges with one string attribute.
 #[test]
-fn added_points_allocate_nothing() {
-    let small = gauge_metrics(16);
-    let large = gauge_metrics(256);
-    let added_points = 256 - 16;
-
-    let added_allocations = allocations_converting(&large) - allocations_converting(&small);
-    assert_eq!(
-        added_allocations, 0,
-        "{added_allocations} allocations for {added_points} added points"
-    );
+fn allocations_amortize_with_string_attributes() {
+    assert_allocations_amortize(gauge_metrics);
 }
 
 /// A gauge whose points carry one attribute of every non-string value type.
@@ -84,14 +95,6 @@ fn gauge_with_typed_attributes(points: usize) -> ResourceMetrics {
 }
 
 #[test]
-fn added_points_with_typed_attributes_allocate_nothing() {
-    let small = gauge_with_typed_attributes(16);
-    let large = gauge_with_typed_attributes(256);
-    let added_points = 256 - 16;
-
-    let added_allocations = allocations_converting(&large) - allocations_converting(&small);
-    assert_eq!(
-        added_allocations, 0,
-        "{added_allocations} allocations for {added_points} added points"
-    );
+fn allocations_amortize_with_typed_attributes() {
+    assert_allocations_amortize(gauge_with_typed_attributes);
 }
