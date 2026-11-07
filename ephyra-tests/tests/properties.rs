@@ -502,9 +502,9 @@ fn histogram_points_are_consistent(scenario: Scenario) {
     let lines =
         exposition::parse(&text).unwrap_or_else(|e| panic!("unreadable output: {e}\n{text}"));
 
-    // Buckets of one histogram point, keyed by family and labels without `le`.
-    let mut buckets: BTreeMap<(String, Vec<(String, String)>), Vec<(f64, Number)>> =
-        BTreeMap::new();
+    /// A histogram point: its family and its labels without `le`.
+    type Point = (String, Vec<(String, String)>);
+    let mut buckets: BTreeMap<Point, Vec<(f64, Number)>> = BTreeMap::new();
     let mut counts = HashMap::new();
     let mut sums = HashSet::new();
     for FamilySample {
