@@ -58,9 +58,10 @@ jobs:
       with:
         tool: cargo-hack,cargo-nextest
     # nextest does not run doctests, which needs the
-    # `exporter` feature and runs once below.
+    # `exporter` feature and runs once below. The property tests
+    # run in their own workflow, with an optimized profile.
     - name: Run tests (every feature combination)
-      run: cargo hack --feature-powerset --workspace nextest run
+      run: cargo hack --feature-powerset --workspace --exclude ottotom-ephyra-tests nextest run
     - name: Run doctests
       run: cargo test --doc
 

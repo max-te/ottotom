@@ -13,7 +13,7 @@ description = "Conversion of OpenTelemetry metrics to OpenMetrics Text format"
 
 [workspace]
 resolver = "3"
-members = ["testsupport"]
+members = ["testsupport", "ephyra-tests"]
 
 [workspace.lints.rust]
 # `deny`, not `forbid`: the benchmark installs a custom global allocator and
@@ -74,3 +74,10 @@ harness = false
 [[bench]]
 name = "conversion"
 harness = false
+
+# For the property tests in ephyra-tests: optimized, so a search runs many
+# inputs, but with the checks that turn bugs into failures.
+[profile.ephyra]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true

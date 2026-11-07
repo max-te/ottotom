@@ -18,9 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: ephyra-tests
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
@@ -29,13 +26,13 @@ jobs:
     # change under test. Stored regressions are replayed in every run.
     - name: Run property tests (fixed seed)
       if: github.event_name == 'push' || github.event_name == 'pull_request'
-      run: cargo test --release --locked
+      run: cargo test --profile ephyra --locked -p ottotom-ephyra-tests
       env:
         EPHYRA_SEED: 1
         EPHYRA_REPORT_JSON: .ephyra/reports.jsonl
     - name: Search with a random seed
       if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      run: cargo test --release --locked
+      run: cargo test --profile ephyra --locked -p ottotom-ephyra-tests
       env:
         EPHYRA_TESTS: 20000
         EPHYRA_FAILURES: 12
