@@ -1208,11 +1208,8 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
         // c[impl histogram.sum] - {name}_sum only if the sum is positive and monotonic
         // om[impl histogram.negative-threshold-nosum]
         // TODO: monitor if opentelmetry-sdk introduces positive f64 histograms?
-        // om[impl histogram.nonanneg] - a NaN sum, which the SDK before 0.33.1
-        // records, is left out like a negative one
         let has_sum = (T::is_unsigned() || point.min().as_ref().is_some_and(T::is_nonnegative))
-            && bounds.iter().all(|bound| *bound >= 0.0)
-            && !point.sum().to_f64().is_nan();
+            && bounds.iter().all(|bound| *bound >= 0.0);
         // om[impl metricpoint.nointerleave] - all value samples of one MetricPoint are written contiguously
         // om[impl histogram.count-iff-sum] - the +Inf bucket still carries the count
         if has_sum {
@@ -1326,7 +1323,7 @@ impl<T: Numeric + Copy> DataPoints for Sum<T> {
     }
 
     /// Keeps a counter point only if its total is a number of at least 0.
-    /// The SDK before 0.33.1 records NaN and infinite measurements.
+    /// The API does not validate increments, so a total can be negative.
     fn keeps_value(&self, metric: &str, point: &Self::Point) -> bool {
         let total = point.value().to_f64();
         if !self.is_monotonic() || total >= 0.0 {

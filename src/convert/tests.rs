@@ -1651,35 +1651,3 @@ fn test_write_escaped_value_matches_as_str() {
         assert_eq!(written, expected, "{value:?}");
     }
 }
-
-#[test]
-// om[verify histogram.nonanneg]
-fn test_non_finite_measurements_give_valid_output() {
-    // The SDK before 0.33.1 records NaN and infinite measurements.
-    let metrics = collect_metrics(|meter| {
-        let counter = meter.f64_counter("valid").build();
-        counter.add(1.0, &[]);
-        let counter = meter.f64_counter("nan").build();
-        counter.add(1.0, &[]);
-        counter.add(f64::NAN, &[]);
-        let counter = meter.f64_counter("negative").build();
-        counter.add(f64::NEG_INFINITY, &[]);
-        let histogram = meter.f64_histogram("h").with_boundaries(vec![1.0]).build();
-        histogram.record(0.5, &[]);
-        histogram.record(f64::NAN, &[]);
-        let gauge = meter.f64_gauge("g").build();
-        gauge.record(f64::NAN, &[]);
-    });
-    let output = metrics.to_openmetrics_string().unwrap();
-
-    openmetrics_parser::openmetrics::parse_openmetrics(&output)
-        .unwrap_or_else(|e| panic!("{e:?}\n{output}"));
-    assert!(output.contains("valid_total{"), "{output}");
-    assert!(!output.contains("nan_total"), "{output}");
-    assert!(!output.contains("negative_total"), "{output}");
-    // The histogram keeps its buckets; the `+Inf` bucket carries the count.
-    assert!(!output.contains("h_sum"), "{output}");
-    assert!(output.contains("le=\"+Inf\"} 2 "), "{output}");
-    // Gauges may be NaN.
-    assert!(output.contains("} NaN "), "{output}");
-}

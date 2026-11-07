@@ -8,11 +8,8 @@ description = "Property-based tests for ottotom, written with ephyra"
 [dependencies]
 ottotom = { path = ".." }
 ottotom-testsupport = { path = "../testsupport" }
-opentelemetry = { version = "0.33.0", default-features = false, features = ["metrics"] }
-opentelemetry_sdk = { version = "0.33.0", default-features = false, features = [
-    "metrics",
-    "experimental_metrics_custom_reader",
-] }
+opentelemetry = { workspace = true, features = ["metrics"] }
+opentelemetry_sdk = { workspace = true, features = ["experimental_metrics_custom_reader"] }
 ephyra = "0.0.1"
 
 [dev-dependencies]
