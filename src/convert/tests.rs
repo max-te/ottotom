@@ -1212,8 +1212,14 @@ fn test_one_metric_name_in_two_scopes_is_one_family() {
 // c[verify metadata.no-duplicates]
 fn test_one_metric_name_with_two_number_types_is_one_family() {
     let metrics = collect_metrics(|meter| {
-        meter.u64_counter("a").build().add(1, &[]);
-        meter.f64_counter("a").build().add(1.5, &[]);
+        meter
+            .u64_counter("a")
+            .build()
+            .add(1, &[KeyValue::new("k", "u")]);
+        meter
+            .f64_counter("a")
+            .build()
+            .add(1.5, &[KeyValue::new("k", "f")]);
     });
     let config = Config::builder()
         .scope_info_enabled(false)
@@ -1221,8 +1227,8 @@ fn test_one_metric_name_with_two_number_types_is_one_family() {
         .build();
     let text = metrics.to_openmetrics_string_with_config(config).unwrap();
     assert_eq!(type_lines(&text), ["# TYPE a counter"], "{text}");
-    assert!(text.contains("a_total{} 1.5 "), "{text}");
-    assert!(text.contains("a_total{} 1 "), "{text}");
+    assert!(text.contains("a_total{k=\"f\"} 1.5 "), "{text}");
+    assert!(text.contains("a_total{k=\"u\"} 1 "), "{text}");
 }
 
 #[test]
@@ -1317,4 +1323,162 @@ fn test_families_without_a_shared_sample_name_are_kept() {
         ["# TYPE a histogram", "# TYPE a_count counter"],
         "{text}"
     );
+}
+
+#[test]
+// om[verify metricfamily.unique-labelset]
+fn test_points_repeating_a_label_set_are_dropped() {
+    // Without scope labels, two scopes' points of one family are told apart by nothing.
+    let metrics = collect_from_scopes([scope("one"), scope("two")], |meters| {
+        meters[0].u64_gauge("g").build().record(1, &[]);
+        meters[1].u64_gauge("g").build().record(2, &[]);
+    });
+    let config = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+    let samples: Vec<&str> = text.lines().filter(|l| l.starts_with("g{")).collect();
+    assert_eq!(samples.len(), 1, "{text}");
+    assert!(samples[0].starts_with("g{} 1 "), "{text}");
+
+    // An integer and a string attribute of one key both write `k="1"`.
+    let metrics = collect_metrics(|meter| {
+        let gauge = meter.u64_gauge("g").build();
+        gauge.record(1, &[KeyValue::new("k", 1)]);
+        gauge.record(2, &[KeyValue::new("k", "1")]);
+    });
+    let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+    assert_eq!(
+        text.lines().filter(|l| l.starts_with("g{")).count(),
+        1,
+        "{text}"
+    );
+}
+
+#[test]
+fn test_kept_point_of_a_repeated_label_set_does_not_depend_on_recording_order() {
+    let config = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let sample = |integer_first: bool| {
+        let metrics = collect_metrics(|meter| {
+            let gauge = meter.u64_gauge("g").build();
+            let integer = (1, KeyValue::new("k", 1));
+            let string = (2, KeyValue::new("k", "1"));
+            let (first, second) = if integer_first {
+                (integer, string)
+            } else {
+                (string, integer)
+            };
+            gauge.record(first.0, &[first.1]);
+            gauge.record(second.0, &[second.1]);
+        });
+        let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+        let sample = text.lines().find(|l| l.starts_with("g{")).unwrap();
+        sample.split(' ').nth(1).unwrap().to_owned()
+    };
+    assert_eq!(sample(true), sample(false));
+}
+
+#[test]
+fn test_series_are_written_in_label_order() {
+    let metrics = collect_metrics(|meter| {
+        let gauge = meter.u64_gauge("g").build();
+        for value in ["h", "g", "f", "e", "d", "c", "b", "a"] {
+            gauge.record(1, &[KeyValue::new("k", value)]);
+        }
+    });
+    let config = Config::builder()
+        .scope_info_enabled(false)
+        .target_info_enabled(false)
+        .build();
+    let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+    let labels: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("g{"))
+        .map(|l| &l[2..l.find('}').unwrap()])
+        .collect();
+    let mut sorted = labels.clone();
+    sorted.sort_unstable();
+    assert_eq!(labels.len(), 8, "{text}");
+    assert_eq!(labels, sorted, "{text}");
+}
+
+#[test]
+fn test_drop_repeated_label_sets_keeps_first_member_then_smallest_hash() {
+    let text = r#"x="1"x="1"x="1"y="2""#;
+    let point = |member, point, start| LabeledPoint {
+        member,
+        point,
+        start,
+        end: start + 5,
+        key: 0,
+    };
+    let mut points = vec![
+        point(1, 0, 0),
+        point(0, 3, 5),
+        point(0, 1, 10),
+        point(0, 0, 15),
+    ];
+    drop_repeated_label_sets("f", text, &mut points, |member| {
+        assert_eq!(member, 0, "only member 0 holds a repeat of its own");
+        vec![0, 9, 0, 5]
+    });
+    let kept: Vec<_> = points.iter().map(|p| (p.member, p.point)).collect();
+    assert_eq!(kept, [(0, 3), (0, 0)]);
+}
+
+#[test]
+fn test_sort_by_label_set_orders_as_bytes_do() {
+    // Label sets from a small alphabet with NUL, around the 8-byte key boundaries.
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut random = |bound: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % bound
+    };
+    for prefix in ["", "otel_scope_name=\"ottotom.bench\",system_device=\"dev"] {
+        let mut text = String::new();
+        let mut points = Vec::new();
+        let mut push = |text: &mut String, member, label_set: &str| {
+            let start = text.len();
+            text.push_str(label_set);
+            let point = points.len();
+            points.push(LabeledPoint {
+                member,
+                point,
+                start,
+                end: text.len(),
+                key: 0,
+            });
+        };
+        push(&mut text, 0, "otel_metric_overflow=\"true\"");
+        for _ in 0..500 {
+            let len = random(20) as usize;
+            let suffix: String = (0..len)
+                .map(|_| ['\0', 'a', 'b'][random(3) as usize])
+                .collect();
+            push(&mut text, random(3) as usize, &format!("{prefix}{suffix}"));
+        }
+        // Label sets that share their bytes in steps of 8 reach the depth limit.
+        for steps in 0..40 {
+            push(&mut text, 0, &"abcdefgh".repeat(steps));
+        }
+
+        let mut expected = points.clone();
+        expected.sort_by(|a, b| {
+            text.as_bytes()[a.start..a.end]
+                .cmp(&text.as_bytes()[b.start..b.end])
+                .then(a.member.cmp(&b.member))
+        });
+        sort_by_label_set(text.as_bytes(), &mut points, 0, 0);
+        let order = |points: &[LabeledPoint]| {
+            let label_sets = points.iter().map(|p| (&text[p.start..p.end], p.member));
+            label_sets.collect::<Vec<_>>()
+        };
+        assert_eq!(order(&points), order(&expected), "prefix {prefix:?}");
+    }
 }

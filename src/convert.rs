@@ -4,10 +4,11 @@ use std::hash::{DefaultHasher, Hasher};
 use std::time::SystemTime;
 
 use crate::format::Numeric;
-use opentelemetry::{InstrumentationScope, Key, KeyValue, SpanId, TraceId, Value};
+use opentelemetry::{Array, InstrumentationScope, Key, KeyValue, SpanId, TraceId, Value};
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
-    AggregatedMetrics, Exemplar, Gauge, Histogram, MetricData, ResourceMetrics, Sum,
+    AggregatedMetrics, Exemplar, Gauge, GaugeDataPoint, Histogram, HistogramDataPoint, MetricData,
+    ResourceMetrics, Sum, SumDataPoint,
 };
 use opentelemetry_sdk::metrics::data::{Metric, ScopeMetrics};
 use ufmt::{uDisplay, uWrite, uwrite, uwriteln};
@@ -139,8 +140,10 @@ struct Context<'f, W: uWrite> {
     f: W,
     /// the conversion configuration
     config: Config,
-    /// a temporary buffer to store the serialized metric attributes
+    /// the label sets of the current family's points, back to back
     attr_buffer: String,
+    /// the current family's points, each with its label set in `attr_buffer`
+    labeled_points: Vec<LabeledPoint>,
     /// scratch space for sanitized label names, reused across points
     label_names: String,
     /// the sanitized name of the current metric
@@ -166,6 +169,7 @@ impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
             f: WriteAsUWrite(f),
             config,
             attr_buffer: String::with_capacity(256),
+            labeled_points: Vec::new(),
             label_names: String::with_capacity(64),
             name: String::with_capacity(64),
             unit: None,
@@ -284,6 +288,7 @@ impl WriteOpenMetrics for ResourceMetrics {
             write_header(&mut ctx, description)?;
 
             // c[impl metadata.conflict-keep-points] - every member of the family's type is written
+            let mut written = Vec::with_capacity(family.len());
             for member in family.iter() {
                 if member.typ != typ {
                     // c[impl metadata.drop-warn]
@@ -294,12 +299,10 @@ impl WriteOpenMetrics for ResourceMetrics {
                     );
                     continue;
                 }
-                if ctx.config.scope_info_enabled {
-                    ctx.scope_name = member.scope.name();
-                    ctx.scope_version = member.scope.version();
-                }
-                write_values(&mut ctx, member.metric.data())?;
+                let scope = (member.scope.name(), member.scope.version());
+                written.push((scope, member.metric.data()));
             }
+            write_points(&mut ctx, &written)?;
         }
         // om[impl text.eof]
         f.write_str("# EOF\n")?;
@@ -607,38 +610,367 @@ fn write_otel_scope_info<U: uWrite>(
     Ok(())
 }
 
-/// Write all data points for this metric
-// c[impl resource.attrs] - resource attributes are dropped: labels on metric
-// families carry only point and scope attributes, never resource attributes
+/// Write all data points for this metric, in the scope set in `ctx`.
 fn write_values<U: uWrite>(
     ctx: &mut Context<'_, U>,
     metric: &AggregatedMetrics,
 ) -> Result<(), U::Error> {
-    match metric {
-        AggregatedMetrics::F64(metric_data) => {
-            match metric_data {
-                MetricData::Gauge(gauge) => write_gauge(ctx, gauge),
-                MetricData::Sum(sum) => write_counter(ctx, sum),
-                MetricData::Histogram(histogram) => write_histogram(ctx, histogram),
-                _ => unimplemented!("only gauge/sum/histogram metrics should be constructible"),
-                // See https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#exponential-histograms
-                // for exponential histograms
+    let scope = (ctx.scope_name, ctx.scope_version);
+    write_points(ctx, &[(scope, metric)])
+}
+
+/// The name and version of an instrumentation scope.
+type ScopeLabels<'s> = (&'s str, Option<&'s str>);
+
+/// A point of a family, with its label set rendered into `Context::attr_buffer`.
+#[derive(Clone, Copy)]
+struct LabeledPoint {
+    /// index of the metric in the family's members
+    member: usize,
+    /// index of the point in its metric's data points
+    point: usize,
+    /// byte range of the label set
+    start: usize,
+    end: usize,
+    /// the label set's [`sort_key`], set while sorting
+    key: u64,
+}
+
+/// Writes the points of one family. `members` holds each metric of the family
+/// with the scope it was recorded in.
+///
+/// Each metric's points are written in the order of their label sets. A point
+/// whose label set another point of the family already has is dropped.
+// c[impl resource.attrs] - resource attributes are dropped: labels on metric
+// families carry only point and scope attributes, never resource attributes
+fn write_points<M: FamilyMember, U: uWrite>(
+    ctx: &mut Context<'_, U>,
+    members: &[(ScopeLabels<'_>, &M)],
+) -> Result<(), U::Error> {
+    // Taken out of `ctx` while the members write, so their capacity is reused.
+    let mut text = std::mem::take(&mut ctx.attr_buffer);
+    let mut points = std::mem::take(&mut ctx.labeled_points);
+    text.clear();
+    points.clear();
+
+    for (member, (scope, data)) in members.iter().enumerate() {
+        data.render_labels(ctx, *scope, member, &mut text, &mut points);
+    }
+    drop_repeated_label_sets(&ctx.name, &text, &mut points, |member| {
+        members[member].1.hash_points()
+    });
+
+    let mut written = Ok(());
+    let mut rest = points.as_slice();
+    for (member, (_, data)) in members.iter().enumerate() {
+        let len = rest.iter().take_while(|p| p.member == member).count();
+        let (own, later) = rest.split_at(len);
+        rest = later;
+        written = data.write_labeled(ctx, own, &text);
+        if written.is_err() {
+            break;
+        }
+    }
+
+    ctx.attr_buffer = text;
+    ctx.labeled_points = points;
+    written
+}
+
+/// Sorts `points` by label set and keeps one point per label set, then groups
+/// the kept points by member.
+///
+/// Of the points sharing a label set, the one of the first member is kept.
+/// Within one member, the SDK's point order is arbitrary, so the point with the
+/// smallest [`hash_attrs`] is kept. `point_hashes` gives those hashes for all
+/// points of a member, and is called only for such repeats.
+// om[impl metricfamily.unique-labelset]
+fn drop_repeated_label_sets(
+    family: &str,
+    text: &str,
+    points: &mut Vec<LabeledPoint>,
+    point_hashes: impl Fn(usize) -> Vec<u64>,
+) {
+    sort_by_label_set(text.as_bytes(), points, 0, 0);
+    let label_set = |p: &LabeledPoint| &text[p.start..p.end];
+
+    let mut hashes: Vec<(usize, Vec<u64>)> = Vec::new();
+    let mut kept = 0;
+    let mut start = 0;
+    while start < points.len() {
+        let labels = label_set(&points[start]);
+        let len = points[start..]
+            .iter()
+            .take_while(|p| label_set(p) == labels)
+            .count();
+        let run = &points[start..start + len];
+        start += len;
+
+        let first_member = run[0].member;
+        let candidates = run.iter().take_while(|p| p.member == first_member);
+        let survivor = if candidates.clone().nth(1).is_none() {
+            run[0]
+        } else {
+            let index = match hashes.iter().position(|(m, _)| *m == first_member) {
+                Some(index) => index,
+                None => {
+                    hashes.push((first_member, point_hashes(first_member)));
+                    hashes.len() - 1
+                }
+            };
+            let member_hashes = &hashes[index].1;
+            *candidates
+                .min_by_key(|p| (member_hashes[p.point], p.point))
+                .expect("a run is never empty")
+        };
+        let labels = &text[survivor.start..survivor.end];
+        for _ in 1..len {
+            // c[impl metadata.drop-warn]
+            warn!("Dropping a point of {family}: its label set {{{labels}}} is already written");
+        }
+        points[kept] = survivor;
+        kept += 1;
+    }
+    points.truncate(kept);
+
+    if !points.is_sorted_by_key(|p| p.member) {
+        points.sort_by_key(|p| p.member);
+    }
+}
+
+/// Sorts `points` by label set, and the points of one label set by member.
+/// Points of one member with the same label set stay in any order. All label
+/// sets in `points` agree on their first `skip` bytes.
+///
+/// Points are sorted by 8 bytes of their label set at a time. Before each
+/// round, the bytes that all label sets of the group share are skipped, so a
+/// long common prefix is read once instead of in every comparison.
+fn sort_by_label_set(text: &[u8], points: &mut [LabeledPoint], skip: usize, depth: usize) {
+    /// Rounds after which the rest is sorted by comparing whole label sets.
+    const MAX_DEPTH: usize = 16;
+
+    let Some((first, others)) = points.split_first() else {
+        return;
+    };
+    let after = |p: &LabeledPoint, skip: usize| &text[p.start + skip..p.end];
+    let common = others.iter().fold(after(first, skip).len(), |common, p| {
+        common_prefix_len(&after(first, skip)[..common], after(p, skip))
+    });
+    let skip = skip + common;
+
+    if depth == MAX_DEPTH {
+        points.sort_unstable_by(|a, b| {
+            after(a, skip)
+                .cmp(after(b, skip))
+                .then(a.member.cmp(&b.member))
+        });
+        return;
+    }
+
+    for point in points.iter_mut() {
+        point.key = sort_key(after(point, skip));
+    }
+    // The key pads short label sets with zeros, and label values may hold NUL
+    // bytes. Of two label sets with the same key, the one with fewer bytes
+    // left is the smaller, unless both go on past the key.
+    let left = |p: &LabeledPoint| (p.end - p.start - skip).min(8);
+    let rank =
+        |p: &LabeledPoint| (u128::from(p.key) << 64) | ((left(p) as u128) << 60) | p.member as u128;
+    points.sort_unstable_by_key(rank);
+
+    let mut start = 0;
+    while start < points.len() {
+        let group = |p: &LabeledPoint| (p.key, left(p));
+        let key = group(&points[start]);
+        let len = points[start..]
+            .iter()
+            .take_while(|p| group(p) == key)
+            .count();
+        // Label sets that go on past an equal key are ordered by what follows.
+        if len > 1 && key.1 == 8 {
+            sort_by_label_set(text, &mut points[start..start + len], skip + 8, depth + 1);
+        }
+        start += len;
+    }
+}
+
+/// The number of leading bytes `a` and `b` share, compared 8 bytes at a time.
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    let len = a.len().min(b.len());
+    let mut i = 0;
+    while i + 8 <= len {
+        let word = |bytes: &[u8]| u64::from_le_bytes(bytes[i..i + 8].try_into().expect("8 bytes"));
+        let difference = word(a) ^ word(b);
+        if difference != 0 {
+            return i + difference.trailing_zeros() as usize / 8;
+        }
+        i += 8;
+    }
+    i + std::iter::zip(&a[i..len], &b[i..len])
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
+/// The first 8 bytes of `bytes` as a number, padded with zeros. When the keys
+/// of two byte strings differ, they order the strings as their bytes do.
+fn sort_key(bytes: &[u8]) -> u64 {
+    let mut key = [0; 8];
+    let len = bytes.len().min(8);
+    key[..len].copy_from_slice(&bytes[..len]);
+    u64::from_be_bytes(key)
+}
+
+/// Metric data that contributes points to a family.
+trait FamilyMember {
+    /// Renders the label set of each point onto `text` and records the point
+    /// in `points`. A point that would shadow a reserved label is skipped.
+    fn render_labels<U: uWrite>(
+        &self,
+        ctx: &mut Context<'_, U>,
+        scope: ScopeLabels<'_>,
+        member: usize,
+        text: &mut String,
+        points: &mut Vec<LabeledPoint>,
+    );
+
+    /// The [`hash_attrs`] of each point, in point order.
+    fn hash_points(&self) -> Vec<u64>;
+
+    /// Writes `points` of this metric, in the given order.
+    fn write_labeled<U: uWrite>(
+        &self,
+        ctx: &mut Context<'_, U>,
+        points: &[LabeledPoint],
+        text: &str,
+    ) -> Result<(), U::Error>;
+}
+
+/// The gauge, sum or histogram of one metric, whose points are written alike.
+trait DataPoints {
+    type Point;
+    /// Whether the points are written as buckets, which reserve the label `le`.
+    const HISTOGRAM: bool;
+
+    fn points(&self) -> impl Iterator<Item = &Self::Point>;
+
+    fn attributes(point: &Self::Point) -> impl Iterator<Item = &KeyValue>;
+
+    /// Writes the samples of `points`, each with its rendered label set.
+    fn write_samples<'p, U: uWrite>(
+        &'p self,
+        ctx: &mut Context<'_, U>,
+        points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
+    ) -> Result<(), U::Error>;
+}
+
+impl<D: DataPoints> FamilyMember for D {
+    fn render_labels<U: uWrite>(
+        &self,
+        ctx: &mut Context<'_, U>,
+        (scope_name, scope_version): ScopeLabels<'_>,
+        member: usize,
+        text: &mut String,
+        points: &mut Vec<LabeledPoint>,
+    ) {
+        // c[impl scope.labels-on-points]
+        let scope_name_attrs = make_scope_name_attrs(ctx.config, scope_name, scope_version);
+        let reserved = reserved_labels(ctx.config, D::HISTOGRAM);
+        let data_points = self.points();
+        let count = data_points.size_hint().0;
+        points.reserve(count);
+        for (index, point) in data_points.enumerate() {
+            if !keeps_reserved_labels(&ctx.name, D::attributes(point), reserved) {
+                continue;
+            }
+            let start = text.len();
+            let Ok(()) = write_attrs_with(
+                text,
+                &mut ctx.label_names,
+                D::attributes(point).chain(scope_name_attrs.iter()),
+            );
+            points.push(LabeledPoint {
+                member,
+                point: index,
+                start,
+                end: text.len(),
+                key: 0,
+            });
+            if index == 0 {
+                // Label sets of one metric tend to have similar lengths.
+                // The headroom covers somewhat longer values.
+                let estimate = text.len() - start + 8;
+                text.reserve(estimate * count.saturating_sub(1));
             }
         }
-        AggregatedMetrics::U64(metric_data) => match metric_data {
-            MetricData::Gauge(gauge) => write_gauge(ctx, gauge),
-            MetricData::Sum(sum) => write_counter(ctx, sum),
-            MetricData::Histogram(histogram) => write_histogram(ctx, histogram),
-            _ => unimplemented!("only gauge/sum/histogram metrics should be constructible"),
-        },
-        AggregatedMetrics::I64(metric_data) => match metric_data {
-            MetricData::Gauge(gauge) => write_gauge(ctx, gauge),
-            MetricData::Sum(sum) => write_counter(ctx, sum),
-            MetricData::Histogram(_) => {
+    }
+
+    fn hash_points(&self) -> Vec<u64> {
+        self.points()
+            .map(|point| hash_attrs(D::attributes(point)))
+            .collect()
+    }
+
+    fn write_labeled<U: uWrite>(
+        &self,
+        ctx: &mut Context<'_, U>,
+        points: &[LabeledPoint],
+        text: &str,
+    ) -> Result<(), U::Error> {
+        let data_points: Vec<_> = self.points().collect();
+        self.write_samples(
+            ctx,
+            points
+                .iter()
+                .map(|p| (data_points[p.point], &text[p.start..p.end])),
+        )
+    }
+}
+
+/// Evaluates `$body` with `$data` bound to the gauge, sum or histogram in `$metric`.
+macro_rules! with_data_points {
+    ($metric:expr, $data:ident => $body:expr) => {
+        match $metric {
+            AggregatedMetrics::F64(MetricData::Gauge($data)) => $body,
+            AggregatedMetrics::F64(MetricData::Sum($data)) => $body,
+            AggregatedMetrics::F64(MetricData::Histogram($data)) => $body,
+            AggregatedMetrics::U64(MetricData::Gauge($data)) => $body,
+            AggregatedMetrics::U64(MetricData::Sum($data)) => $body,
+            AggregatedMetrics::U64(MetricData::Histogram($data)) => $body,
+            AggregatedMetrics::I64(MetricData::Gauge($data)) => $body,
+            AggregatedMetrics::I64(MetricData::Sum($data)) => $body,
+            AggregatedMetrics::I64(MetricData::Histogram(_)) => {
                 unimplemented!("signed histograms should not be constructible")
             }
+            // See https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#exponential-histograms
+            // for exponential histograms
             _ => unimplemented!("only gauge/sum/histogram metrics should be constructible"),
-        },
+        }
+    };
+}
+
+impl FamilyMember for AggregatedMetrics {
+    fn render_labels<U: uWrite>(
+        &self,
+        ctx: &mut Context<'_, U>,
+        scope: ScopeLabels<'_>,
+        member: usize,
+        text: &mut String,
+        points: &mut Vec<LabeledPoint>,
+    ) {
+        with_data_points!(self, data => data.render_labels(ctx, scope, member, text, points))
+    }
+
+    fn hash_points(&self) -> Vec<u64> {
+        with_data_points!(self, data => data.hash_points())
+    }
+
+    fn write_labeled<U: uWrite>(
+        &self,
+        ctx: &mut Context<'_, U>,
+        points: &[LabeledPoint],
+        text: &str,
+    ) -> Result<(), U::Error> {
+        with_data_points!(self, data => data.write_labeled(ctx, points, text))
     }
 }
 
@@ -675,31 +1007,49 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     histogram: &Histogram<T>,
 ) -> Result<(), U::Error> {
-    // c[impl scope.labels-on-points]
-    let scope_name_attrs = make_scope_name_attrs(ctx.config, ctx.scope_name, ctx.scope_version);
+    let scope = (ctx.scope_name, ctx.scope_version);
+    write_points(ctx, &[(scope, histogram)])
+}
+
+impl<T: Numeric + Copy> DataPoints for Histogram<T> {
+    type Point = HistogramDataPoint<T>;
+    const HISTOGRAM: bool = true;
+
+    fn points(&self) -> impl Iterator<Item = &Self::Point> {
+        self.data_points()
+    }
+
+    fn attributes(point: &Self::Point) -> impl Iterator<Item = &KeyValue> {
+        point.attributes()
+    }
+
+    fn write_samples<'p, U: uWrite>(
+        &'p self,
+        ctx: &mut Context<'_, U>,
+        points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
+    ) -> Result<(), U::Error> {
+        write_histogram_samples(ctx, self, points)
+    }
+}
+
+fn write_histogram_samples<'p, T: Numeric + Copy, U: uWrite>(
+    ctx: &mut Context<'_, U>,
+    histogram: &Histogram<T>,
+    points: impl Iterator<Item = (&'p HistogramDataPoint<T>, &'p str)>,
+) -> Result<(), U::Error>
+where
+    T: 'p,
+{
     let ts = to_timestamp(histogram.time());
     let created = to_timestamp(histogram.start_time());
-    let attrs = &mut ctx.attr_buffer;
     assert_eq!(
         histogram.temporality(),
         Temporality::Cumulative,
         "Only cumulative Histograms are supported"
     );
 
-    let mut points: Vec<_> = histogram.data_points().collect();
-    points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
-    let reserved = reserved_labels(ctx.config, true);
-    points.retain(|p| keeps_reserved_labels(&ctx.name, p.attributes(), reserved));
-
     // om[impl metric.nointerleave] - each point's LabelSet is written contiguously
-    for point in points {
-        attrs.clear();
-        let Ok(()) = write_attrs_with(
-            attrs,
-            &mut ctx.label_names,
-            point.attributes().chain(scope_name_attrs.iter()),
-        );
-
+    for (point, attrs) in points {
         // c[impl histogram.created]
         uwriteln!(
             ctx.f,
@@ -764,9 +1114,7 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             }
         }
 
-        if !attrs.is_empty() {
-            attrs.push(',');
-        }
+        let le_separator = if attrs.is_empty() { "" } else { "," };
         let mut cumulative_count = 0;
         for (i, (bound, count)) in std::iter::zip(&bounds, point.bucket_counts()).enumerate() {
             // c[impl histogram.bucket.cumulative]
@@ -775,9 +1123,10 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             uwrite!(
                 // Not using write! here is a ~19% speedup
                 ctx.f,
-                "{}_bucket{{{}le=\"{}\"}} {} {}",
+                "{}_bucket{{{}{}le=\"{}\"}} {} {}",
                 ctx.name,
                 attrs,
+                le_separator,
                 bound.fast_display(),
                 cumulative_count.fast_display(),
                 ts,
@@ -794,9 +1143,10 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
         // c[impl histogram.bucket.inf]
         uwrite!(
             ctx.f,
-            "{}_bucket{{{}le=\"+Inf\"}} {} {}",
+            "{}_bucket{{{}{}le=\"+Inf\"}} {} {}",
             ctx.name,
             attrs,
+            le_separator,
             point.count().fast_display(),
             ts,
         )?;
@@ -811,31 +1161,50 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     sum: &Sum<T>,
 ) -> Result<(), U::Error> {
-    let attrs = &mut ctx.attr_buffer;
-    // c[impl scope.labels-on-points]
-    let scope_name_attrs = make_scope_name_attrs(ctx.config, ctx.scope_name, ctx.scope_version);
+    let scope = (ctx.scope_name, ctx.scope_version);
+    write_points(ctx, &[(scope, sum)])
+}
+
+impl<T: Numeric + Copy> DataPoints for Sum<T> {
+    type Point = SumDataPoint<T>;
+    const HISTOGRAM: bool = false;
+
+    fn points(&self) -> impl Iterator<Item = &Self::Point> {
+        self.data_points()
+    }
+
+    fn attributes(point: &Self::Point) -> impl Iterator<Item = &KeyValue> {
+        point.attributes()
+    }
+
+    fn write_samples<'p, U: uWrite>(
+        &'p self,
+        ctx: &mut Context<'_, U>,
+        points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
+    ) -> Result<(), U::Error> {
+        write_counter_samples(ctx, self, points)
+    }
+}
+
+fn write_counter_samples<'p, T: Numeric + Copy, U: uWrite>(
+    ctx: &mut Context<'_, U>,
+    sum: &Sum<T>,
+    points: impl Iterator<Item = (&'p SumDataPoint<T>, &'p str)>,
+) -> Result<(), U::Error>
+where
+    T: 'p,
+{
     assert_eq!(
         sum.temporality(),
         opentelemetry_sdk::metrics::Temporality::Cumulative,
         "Only cumulative sums are supported"
     );
 
-    let mut points: Vec<_> = sum.data_points().collect();
-    points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
-    let reserved = reserved_labels(ctx.config, false);
-    points.retain(|p| keeps_reserved_labels(&ctx.name, p.attributes(), reserved));
-
     let ts = to_timestamp(sum.time());
     let created = to_timestamp(sum.start_time());
 
     if sum.is_monotonic() {
-        for point in points {
-            attrs.clear();
-            let Ok(()) = write_attrs_with(
-                attrs,
-                &mut ctx.label_names,
-                point.attributes().chain(scope_name_attrs.iter()),
-            );
+        for (point, attrs) in points {
             // c[impl sum.created]
             // om[impl counter.suffix]
             uwriteln!(
@@ -862,13 +1231,7 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
             ctx.f.write_char('\n')?;
         }
     } else {
-        for point in points {
-            attrs.clear();
-            let Ok(()) = write_attrs_with(
-                attrs,
-                &mut ctx.label_names,
-                point.attributes().chain(scope_name_attrs.iter()),
-            );
+        for (point, attrs) in points {
             // c[impl exemplar.types] - exemplars on non-monotonic sums (gauges)
             // are dropped
             uwrite!(
@@ -889,33 +1252,42 @@ fn write_gauge<T: Numeric + Copy, U: uWrite>(
     ctx: &mut Context<'_, U>,
     gauge: &Gauge<T>,
 ) -> Result<(), U::Error> {
-    let attrs = &mut ctx.attr_buffer;
-    // c[impl scope.labels-on-points]
-    let scope_name_attrs = make_scope_name_attrs(ctx.config, ctx.scope_name, ctx.scope_version);
-    let ts = to_timestamp(gauge.time());
-    let mut points: Vec<_> = gauge.data_points().collect();
-    points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
-    let reserved = reserved_labels(ctx.config, false);
-    points.retain(|p| keeps_reserved_labels(&ctx.name, p.attributes(), reserved));
-    for point in points {
-        attrs.clear();
-        let Ok(()) = write_attrs_with(
-            attrs,
-            &mut ctx.label_names,
-            point.attributes().chain(scope_name_attrs.iter()),
-        );
-        // c[impl exemplar.types] - exemplars on gauges are dropped
-        uwrite!(
-            ctx.f,
-            "{}{{{}}} {} {}",
-            ctx.name,
-            attrs,
-            point.value().fast_display(),
-            ts,
-        )?;
-        ctx.f.write_char('\n')?;
+    let scope = (ctx.scope_name, ctx.scope_version);
+    write_points(ctx, &[(scope, gauge)])
+}
+
+impl<T: Numeric + Copy> DataPoints for Gauge<T> {
+    type Point = GaugeDataPoint<T>;
+    const HISTOGRAM: bool = false;
+
+    fn points(&self) -> impl Iterator<Item = &Self::Point> {
+        self.data_points()
     }
-    Ok(())
+
+    fn attributes(point: &Self::Point) -> impl Iterator<Item = &KeyValue> {
+        point.attributes()
+    }
+
+    fn write_samples<'p, U: uWrite>(
+        &'p self,
+        ctx: &mut Context<'_, U>,
+        points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
+    ) -> Result<(), U::Error> {
+        let ts = to_timestamp(self.time());
+        for (point, attrs) in points {
+            // c[impl exemplar.types] - exemplars on gauges are dropped
+            uwrite!(
+                ctx.f,
+                "{}{{{}}} {} {}",
+                ctx.name,
+                attrs,
+                point.value().fast_display(),
+                ts,
+            )?;
+            ctx.f.write_char('\n')?;
+        }
+        Ok(())
+    }
 }
 
 /// Makes an `otel_scope_name` attribute with the specified `scope_name` if
@@ -1071,11 +1443,28 @@ fn hash_attrs<'a, I: Iterator<Item = &'a KeyValue>>(attrs: I) -> u64 {
     for kv in attrs {
         let mut hasher = DefaultHasher::default();
         hasher.write(kv.key.as_str().as_bytes());
+        // The type tells apart values that stringify alike, such as 1 and "1".
+        hasher.write_u8(value_type(&kv.value));
         // TODO: replace `as_str` to avoid allocations
         hasher.write(kv.value.as_str().as_bytes());
         hash ^= hasher.finish(); // XOR to be order-invariant
     }
     hash
+}
+
+/// A number for each type of attribute value.
+fn value_type(value: &Value) -> u8 {
+    match value {
+        Value::Bool(_) => 0,
+        Value::I64(_) => 1,
+        Value::F64(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(Array::Bool(_)) => 4,
+        Value::Array(Array::I64(_)) => 5,
+        Value::Array(Array::F64(_)) => 6,
+        Value::Array(Array::String(_)) => 7,
+        _ => 8,
+    }
 }
 
 /// Writes to `f` the contents of `value` as an escaped string. Does not put quotes around the value.
