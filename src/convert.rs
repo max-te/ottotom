@@ -1592,8 +1592,8 @@ fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
             f.write_str("=\"")?;
         }
         // c[impl mattrs.type-conversion] - non-string values are stringified
-        // c[impl attrs.stringify] - go through opentelemetry-sdk's `as_str`, TODO: implement our own to avoid allocating
-        write_escaped(f, &value.as_str())?;
+        // c[impl attrs.stringify] - as opentelemetry-sdk's `Value::as_str` does
+        write_escaped_value(f, value)?;
         previous_name = Some(name);
     }
     if previous_name.is_some() {
@@ -1611,11 +1611,21 @@ fn hash_attrs<'a, I: Iterator<Item = &'a KeyValue>>(attrs: I) -> u64 {
         hasher.write(kv.key.as_str().as_bytes());
         // The type tells apart values that stringify alike, such as 1 and "1".
         hasher.write_u8(value_type(&kv.value));
-        // TODO: replace `as_str` to avoid allocations
-        hasher.write(kv.value.as_str().as_bytes());
+        write!(HashWriter(&mut hasher), "{}", kv.value).expect("hashing cannot fail");
         hash ^= hasher.finish(); // XOR to be order-invariant
     }
     hash
+}
+
+/// Feeds formatted text into a hasher. [`DefaultHasher::write`] hashes a stream
+/// of bytes, so the pieces hash like the whole text.
+struct HashWriter<'h>(&'h mut DefaultHasher);
+
+impl Write for HashWriter<'_> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.write(s.as_bytes());
+        Ok(())
+    }
 }
 
 /// A number for each type of attribute value.
@@ -1630,6 +1640,35 @@ fn value_type(value: &Value) -> u8 {
         Value::Array(Array::F64(_)) => 6,
         Value::Array(Array::String(_)) => 7,
         _ => 8,
+    }
+}
+
+/// Writes `value` escaped, as [`Value::as_str`] renders it, but without
+/// allocating: non-string values are formatted straight into `f`.
+fn write_escaped_value<U: uWrite>(f: &mut U, value: &Value) -> Result<(), U::Error> {
+    if let Value::String(value) = value {
+        return write_escaped(f, value.as_str());
+    }
+    let mut writer = EscapingWriter { f, error: None };
+    match write!(writer, "{value}") {
+        Ok(()) => Ok(()),
+        Err(std::fmt::Error) => Err(writer.error.expect("only the output can fail")),
+    }
+}
+
+/// Escapes formatted text into a [`uWrite`]. It keeps the output's error,
+/// because [`Write`] can only report [`std::fmt::Error`].
+struct EscapingWriter<'f, U: uWrite> {
+    f: &'f mut U,
+    error: Option<U::Error>,
+}
+
+impl<U: uWrite> Write for EscapingWriter<'_, U> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        write_escaped(self.f, s).map_err(|error| {
+            self.error = Some(error);
+            std::fmt::Error
+        })
     }
 }
 
