@@ -4,6 +4,8 @@
 //! `c[...]` for docs/spec/conversion.md.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
 use ottotom::convert::WriteOpenMetrics;
@@ -235,6 +237,24 @@ fn output_is_well_formed(scenario: Scenario) {
     }
 }
 
+/// The label name an attribute key is written as, derived from the OTel
+/// conversion rules independently of ottotom: characters outside
+/// `[a-zA-Z0-9_]` become `_`, runs of `_` collapse, and a leading digit gets a
+/// `_` prefix.
+fn label_name(key: &str) -> String {
+    let mut name = String::new();
+    for c in key.chars() {
+        let c = if c.is_ascii_alphanumeric() { c } else { '_' };
+        if !(c == '_' && name.ends_with('_')) {
+            name.push(c);
+        }
+    }
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        name.insert(0, '_');
+    }
+    name
+}
+
 /// What one SDK data point must turn into, keyed without any sanitized names:
 /// the sample's role, the label values, and the value.
 type Expected = (&'static str, Vec<String>, Number);
@@ -251,8 +271,28 @@ fn expected_points(scenario: &Scenario, metrics: &ResourceMetrics) -> (Vec<Expec
             scope_labels.push(scope.scope().name().to_owned());
             scope_labels.extend(scope.scope().version().map(str::to_owned));
         }
+        // c[verify mattrs.key-sanitize.collisions] - the values of keys that are
+        // written as one label name are joined with `;`, in the order of the keys.
         let labels = |attrs: &mut dyn Iterator<Item = &opentelemetry::KeyValue>| {
-            let mut values: Vec<String> = attrs.map(|kv| kv.value.as_str().into_owned()).collect();
+            let mut by_label: BTreeMap<String, Vec<(&str, String)>> = BTreeMap::new();
+            for kv in attrs {
+                let value = kv.value.as_str().into_owned();
+                by_label
+                    .entry(label_name(kv.key.as_str()))
+                    .or_default()
+                    .push((kv.key.as_str(), value));
+            }
+            let mut values: Vec<String> = by_label
+                .into_values()
+                .map(|mut keyed| {
+                    keyed.sort();
+                    keyed
+                        .into_iter()
+                        .map(|(_, value)| value)
+                        .collect::<Vec<_>>()
+                        .join(";")
+                })
+                .collect();
             values.extend(scope_labels.iter().cloned());
             values.sort();
             values
@@ -304,24 +344,101 @@ fn expected_points(scenario: &Scenario, metrics: &ResourceMetrics) -> (Vec<Expec
     (points, helps)
 }
 
+/// The role of `sample` if it carries a point's value. A histogram's count is
+/// read from its `+Inf` bucket, which is written even when `_count` is not.
 fn value_role(family: &str, typ: &str, sample: &Sample) -> Option<&'static str> {
     match typ {
         "gauge" if sample.name == family => Some("gauge"),
         "counter" if sample.name == format!("{family}_total") => Some("counter"),
-        "histogram" if sample.name == format!("{family}_count") => Some("histogram"),
+        "histogram"
+            if sample.name == format!("{family}_bucket") && sample.label("le") == Some("+Inf") =>
+        {
+            Some("histogram")
+        }
         _ => None,
+    }
+}
+
+/// Sums the `points` fields of the warnings emitted while it is the default
+/// subscriber. The converter reports every point it drops this way.
+struct DroppedPoints(Arc<AtomicUsize>);
+
+impl tracing::Subscriber for DroppedPoints {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata.is_event() && *metadata.level() == tracing::Level::WARN
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Points(u64);
+
+        impl tracing::field::Visit for Points {
+            fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+                if field.name() == "points" {
+                    self.0 = value;
+                }
+            }
+
+            fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+                if field.name() == "points" {
+                    self.0 = value.try_into().expect("a point count is not negative");
+                }
+            }
+
+            fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+        }
+
+        let mut points = Points(0);
+        event.record(&mut points);
+        let points = usize::try_from(points.0).expect("a point count fits a usize");
+        self.0.fetch_add(points, Ordering::Relaxed);
+    }
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// Converts `metrics`, and counts the points the warnings report as dropped.
+fn convert_counting_drops(scenario: &Scenario, metrics: &ResourceMetrics) -> (String, usize) {
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let text = tracing::subscriber::with_default(DroppedPoints(Arc::clone(&dropped)), || {
+        convert(scenario, metrics)
+    });
+    (text, dropped.load(Ordering::Relaxed))
+}
+
+/// Removes one copy of each item of `written` from `recorded`. Panics with
+/// `context` if an item was not recorded, or was written more often.
+fn remove_written<T: PartialEq + std::fmt::Debug>(
+    recorded: &mut Vec<T>,
+    written: &[T],
+    context: &str,
+) {
+    for item in written {
+        let index = recorded.iter().position(|r| r == item).unwrap_or_else(|| {
+            panic!("{item:?} was written but not recorded, or written twice\n{context}")
+        });
+        recorded.swap_remove(index);
     }
 }
 
 #[ephyra::test(gen = scenario(), tests = 2000)]
 fn every_data_point_is_written_once(scenario: Scenario) {
     let metrics = sdk::collect(&scenario, Order::AsWritten);
-    let text = convert(&scenario, &metrics);
+    let (text, dropped) = convert_counting_drops(&scenario, &metrics);
     let lines =
         exposition::parse(&text).unwrap_or_else(|e| panic!("unreadable output: {e}\n{text}"));
-    let (expected, expected_helps) = expected_points(&scenario, &metrics);
+    let (mut recorded, mut descriptions) = expected_points(&scenario, &metrics);
 
-    let mut actual = Vec::new();
+    let mut written = Vec::new();
     for FamilySample {
         family,
         typ,
@@ -333,28 +450,38 @@ fn every_data_point_is_written_once(scenario: Scenario) {
         };
         let value = Number::parse(&sample.value)
             .unwrap_or_else(|| panic!("unreadable value {:?}\n{text}", sample.value));
-        let mut values: Vec<String> = sample.labels.iter().map(|(_, v)| v.clone()).collect();
+        let mut values: Vec<String> = sample
+            .labels
+            .iter()
+            .filter(|(name, _)| role != "histogram" || name != "le")
+            .map(|(_, value)| value.clone())
+            .collect();
         values.sort();
-        actual.push((role, values, value));
+        written.push((role, values, value));
     }
-    actual.sort();
     // om[verify escaping.chars]
     // om[verify numbers.float]
     // om[verify numbers.integer]
     // c[verify mattrs.to-labels]
-    assert_eq!(actual, expected, "\n{text}");
+    remove_written(&mut recorded, &written, &text);
+    // c[verify metadata.drop-warn] - every point that is not written is reported
+    assert_eq!(
+        recorded.len(),
+        dropped,
+        "points neither written nor reported as dropped: {recorded:?}\n{text}"
+    );
 
-    let mut helps: Vec<String> = lines
+    let helps: Vec<String> = lines
         .iter()
         .filter_map(|l| match l {
             Line::Help { text, .. } => Some(text.clone()),
             _ => None,
         })
         .collect();
-    helps.sort();
     // c[verify metadata.help-description]
+    // c[verify metadata.conflict-unit-help] - a family keeps one of its descriptions
     // om[verify escaping.chars]
-    assert_eq!(helps, expected_helps, "\n{text}");
+    remove_written(&mut descriptions, &helps, &text);
 }
 
 #[ephyra::test(gen = scenario(), tests = 2000)]
