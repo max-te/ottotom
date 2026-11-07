@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use insta::assert_snapshot;
-use opentelemetry::{Array, InstrumentationScope, KeyValue, Value};
+use opentelemetry::{Array, InstrumentationScope, KeyValue, StringValue, Value};
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
     FromAggregated, make_f64_counter_metric, make_f64_exponential_histogram_metric_handle,
@@ -1609,4 +1609,45 @@ fn test_le_labels_follow_changing_bounds() {
     le.update(std::iter::empty());
     assert!(labels(&le).is_empty());
     assert!(le.text.is_empty());
+}
+
+#[test]
+fn test_write_escaped_value_matches_as_str() {
+    let strings = |values: &[&'static str]| {
+        Value::Array(
+            values
+                .iter()
+                .map(|&s| StringValue::from(s))
+                .collect::<Vec<_>>()
+                .into(),
+        )
+    };
+    let values = [
+        Value::Bool(true),
+        Value::Bool(false),
+        Value::I64(0),
+        Value::I64(i64::MIN),
+        Value::I64(i64::MAX),
+        Value::F64(0.1),
+        Value::F64(1.0),
+        Value::F64(-0.0),
+        Value::F64(1e21),
+        Value::F64(5e-324),
+        Value::F64(f64::NAN),
+        Value::F64(f64::INFINITY),
+        Value::F64(f64::NEG_INFINITY),
+        Value::from("a\"b\\c\nd"),
+        Value::Array(vec![true, false].into()),
+        Value::Array(vec![-1i64, 2].into()),
+        Value::Array(vec![1.5, f64::NAN].into()),
+        Value::Array(Vec::<i64>::new().into()),
+        strings(&["a\"b", "c\\d", "e\nf", ""]),
+    ];
+    for value in values {
+        let mut expected = String::new();
+        write_escaped(&mut expected, &value.as_str()).unwrap();
+        let mut written = String::new();
+        write_escaped_value(&mut written, &value).unwrap();
+        assert_eq!(written, expected, "{value:?}");
+    }
 }
