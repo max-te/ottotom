@@ -201,6 +201,21 @@ fn test_write_attrs() {
 }
 
 #[test]
+// c[verify mattrs.key-sanitize.collisions]
+fn test_write_attrs_concatenates_colliding_labels() {
+    let mut output = String::new();
+    let attrs = [
+        KeyValue::new("c", "\""),
+        KeyValue::new("a_b", "y"),
+        KeyValue::new("a.b", "x"),
+    ];
+
+    write_attrs(&mut output, attrs.iter()).unwrap();
+    // `a.b` sorts before `a_b`, so its value comes first.
+    assert_eq!(output, "a_b=\"x;y\",c=\"\\\"\"");
+}
+
+#[test]
 // c[verify attrs.stringify]
 fn test_write_attrs_stringify() {
     let mut output = String::new();

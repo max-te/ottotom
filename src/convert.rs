@@ -141,6 +141,8 @@ struct Context<'f, W: uWrite> {
     config: Config,
     /// a temporary buffer to store the serialized metric attributes
     attr_buffer: String,
+    /// scratch space for sanitized label names, reused across points
+    label_names: String,
     /// the sanitized name of the current metric
     name: String,
     /// the converted unit string of the current metric
@@ -164,6 +166,7 @@ impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
             f: WriteAsUWrite(f),
             config,
             attr_buffer: String::with_capacity(256),
+            label_names: String::with_capacity(64),
             name: String::with_capacity(64),
             unit: None,
             typ: "",
@@ -244,7 +247,7 @@ fn write_target_info<U: uWrite>(
     // om[impl info.suffix]
     f.write_str("target_info{")?;
     // c[impl resource.attrs-sanitize] - resource attrs go through the same sanitization
-    write_attrs_tuple(f, resource.iter())?;
+    write_attrs_tuple(f, &mut String::with_capacity(64), resource.iter())?;
     // om[impl info.value]
     f.write_str("} 1\n")?;
     Ok(())
@@ -365,13 +368,18 @@ fn write_otel_scope_info<U: uWrite>(
     // c[impl scope.info]
     f.write_str("# TYPE otel_scope info\n")?;
 
+    let mut label_names = String::with_capacity(64);
     for scope in metrics {
         // c[impl scope.name-version]
         let otel_attrs =
             make_scope_name_attrs(config, scope.scope().name(), scope.scope().version());
         f.write_str("otel_scope_info{")?;
         // c[impl scope.attribute-labels]
-        write_attrs(f, otel_attrs.iter().chain(scope.scope().attributes()))?;
+        write_attrs_with(
+            f,
+            &mut label_names,
+            otel_attrs.iter().chain(scope.scope().attributes()),
+        )?;
         // om[impl info.value]
         f.write_str("} 1\n")?;
     }
@@ -463,7 +471,11 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
     // om[impl metric.nointerleave] - each point's LabelSet is written contiguously
     for point in points {
         attrs.clear();
-        let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
+        let Ok(()) = write_attrs_with(
+            attrs,
+            &mut ctx.label_names,
+            point.attributes().chain(scope_name_attrs.iter()),
+        );
 
         // c[impl histogram.created]
         uwriteln!(
@@ -594,7 +606,11 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
     if sum.is_monotonic() {
         for point in points {
             attrs.clear();
-            let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
+            let Ok(()) = write_attrs_with(
+                attrs,
+                &mut ctx.label_names,
+                point.attributes().chain(scope_name_attrs.iter()),
+            );
             // c[impl sum.created]
             // om[impl counter.suffix]
             uwriteln!(
@@ -623,7 +639,11 @@ fn write_counter<T: Numeric + Copy, U: uWrite>(
     } else {
         for point in points {
             attrs.clear();
-            let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
+            let Ok(()) = write_attrs_with(
+                attrs,
+                &mut ctx.label_names,
+                point.attributes().chain(scope_name_attrs.iter()),
+            );
             // c[impl exemplar.types] - exemplars on non-monotonic sums (gauges)
             // are dropped
             uwrite!(
@@ -652,7 +672,11 @@ fn write_gauge<T: Numeric + Copy, U: uWrite>(
     points.sort_by_cached_key(|p| hash_attrs(p.attributes()));
     for point in points {
         attrs.clear();
-        let Ok(()) = write_attrs(attrs, point.attributes().chain(scope_name_attrs.iter()));
+        let Ok(()) = write_attrs_with(
+            attrs,
+            &mut ctx.label_names,
+            point.attributes().chain(scope_name_attrs.iter()),
+        );
         // c[impl exemplar.types] - exemplars on gauges are dropped
         uwrite!(
             ctx.f,
@@ -692,30 +716,62 @@ fn write_attrs<'a, I: Iterator<Item = &'a KeyValue>, U: uWrite>(
     f: &mut U,
     attrs: I,
 ) -> Result<(), U::Error> {
-    write_attrs_tuple(f, attrs.map(|kv| (&kv.key, &kv.value)))
+    write_attrs_with(f, &mut String::new(), attrs)
+}
+
+/// Like [`write_attrs`], but reuses `label_names` as scratch space, so the
+/// per-point writers allocate nothing new.
+fn write_attrs_with<'a, I: Iterator<Item = &'a KeyValue>, U: uWrite>(
+    f: &mut U,
+    label_names: &mut String,
+    attrs: I,
+) -> Result<(), U::Error> {
+    write_attrs_tuple(f, label_names, attrs.map(|kv| (&kv.key, &kv.value)))
 }
 
 fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
     f: &mut U,
+    label_names: &mut String,
     attrs: I,
 ) -> Result<(), U::Error> {
     // c[impl mattrs.to-labels] - attribute keys/values are emitted as label name/value pairs
-    let mut first = true;
+    // Each key is sanitized once into `label_names`; a label holds its byte range there.
+    label_names.clear();
+    let mut labels: Vec<(usize, usize, &Key, &Value)> = attrs
+        .map(|(key, value)| {
+            let start = label_names.len();
+            let Ok(()) = write_sanitized_name(label_names, key.as_str(), NameKind::AttributeLabel);
+            (start, label_names.len(), key, value)
+        })
+        .collect();
+    // c[impl mattrs.key-sanitize.collisions] - colliding labels become adjacent,
+    // in the order of their original keys
+    labels.sort_unstable_by(|a, b| {
+        label_names[a.0..a.1]
+            .cmp(&label_names[b.0..b.1])
+            .then_with(|| a.2.cmp(b.2))
+    });
 
-    let mut attrs: Vec<_> = attrs.collect();
-    attrs.sort_unstable_by_key(|attr| attr.0);
-
-    for attr in attrs {
-        if !first {
-            f.write_char(',')?;
+    let mut previous_name: Option<&str> = None;
+    for &(start, end, _, value) in &labels {
+        let name = &label_names[start..end];
+        if previous_name == Some(name) {
+            // c[impl mattrs.key-sanitize.collisions] - values of one label are joined with `;`
+            f.write_char(';')?;
+        } else {
+            if previous_name.is_some() {
+                f.write_str("\",")?;
+            }
+            f.write_str(name)?;
+            f.write_str("=\"")?;
         }
-        write_sanitized_name(f, attr.0.as_str(), NameKind::AttributeLabel)?;
-        f.write_str("=\"")?;
         // c[impl mattrs.type-conversion] - non-string values are stringified
         // c[impl attrs.stringify] - go through opentelemetry-sdk's `as_str`, TODO: implement our own to avoid allocating
-        write_escaped(f, &attr.1.as_str())?;
+        write_escaped(f, &value.as_str())?;
+        previous_name = Some(name);
+    }
+    if previous_name.is_some() {
         f.write_char('"')?;
-        first = false;
     }
     Ok(())
 }
