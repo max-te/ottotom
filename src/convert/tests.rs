@@ -4,12 +4,12 @@ use insta::assert_snapshot;
 use opentelemetry::{Array, KeyValue, Value};
 use opentelemetry_sdk::metrics::data::{MetricData, ScopeMetrics};
 use ottotom_testsupport::metric_data::{
-    make_f64_counter_metric, make_f64_exponential_histogram_metric_handle, make_f64_gauge_metric,
-    make_f64_histogram_metric, make_i64_counter_metric, make_i64_gauge_metric,
-    make_u64_counter_metric_handle, make_u64_gauge_metric, make_u64_gauge_metric_handle,
-    make_u64_histogram_metric,
+    FromAggregated, make_f64_counter_metric, make_f64_exponential_histogram_metric_handle,
+    make_f64_gauge_metric, make_f64_histogram_metric, make_i64_counter_metric,
+    make_i64_gauge_metric, make_u64_counter_metric_handle, make_u64_gauge_metric,
+    make_u64_gauge_metric_handle, make_u64_histogram_metric,
 };
-use ottotom_testsupport::resource_metrics::make_test_metrics;
+use ottotom_testsupport::resource_metrics::{collect_metrics, make_test_metrics};
 use ottotom_testsupport::timestamps::ExtractTimestamps;
 use ufmt::uwrite;
 
@@ -572,6 +572,54 @@ fn test_write_histogram_omits_sum_when_not_monotonic() {
     let unsigned = make_u64_histogram_metric(vec![(1, vec![])]);
     let mut output = String::new();
     write_histogram(&mut Context::with_output(&mut output), &unsigned).unwrap();
+    assert!(output.contains("_sum"), "{output}");
+}
+
+#[test]
+// om[verify histogram.count-iff-sum]
+fn test_write_histogram_omits_count_without_sum() {
+    let negative = make_f64_histogram_metric(vec![(-1.0, vec![])]);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &negative).unwrap();
+    assert!(!output.contains("_count"), "{output}");
+    // The +Inf bucket still carries the count.
+    assert!(output.contains("le=\"+Inf\"} 1 "), "{output}");
+
+    let nonnegative = make_f64_histogram_metric(vec![(1.0, vec![])]);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &nonnegative).unwrap();
+    assert!(output.contains("_count"), "{output}");
+}
+
+/// A histogram with explicit bucket `bounds` and one observation of `value`.
+fn make_f64_histogram_with_bounds(bounds: Vec<f64>, value: f64) -> Histogram<f64> {
+    let metrics = collect_metrics(|meter| {
+        let histogram = meter
+            .f64_histogram("bounded")
+            .with_boundaries(bounds)
+            .build();
+        histogram.record(value, &[]);
+    });
+    metrics
+        .scope_metrics()
+        .flat_map(|scope| scope.metrics())
+        .find_map(|metric| Histogram::<f64>::from_aggregated(metric.data()).cloned())
+        .expect("the histogram was recorded")
+}
+
+#[test]
+// om[verify histogram.negative-threshold-nosum]
+fn test_write_histogram_omits_sum_with_negative_threshold() {
+    let negative_threshold = make_f64_histogram_with_bounds(vec![-1.0, 1.0], 0.5);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &negative_threshold).unwrap();
+    assert!(!output.contains("_sum"), "{output}");
+    assert!(!output.contains("_count"), "{output}");
+
+    // A zero threshold is not negative.
+    let zero_threshold = make_f64_histogram_with_bounds(vec![0.0, 1.0], 0.5);
+    let mut output = String::new();
+    write_histogram(&mut Context::with_output(&mut output), &zero_threshold).unwrap();
     assert!(output.contains("_sum"), "{output}");
 }
 
