@@ -753,6 +753,7 @@ fn write_kept_points<M: FamilyMember, U: uWrite>(
             return Ok(());
         }
         // om[impl metadata.unique] - one header per family, however many metrics it holds
+        // c[impl metadata.no-duplicates] - the plan gives each metric name one family
         write_header(family, help)?;
     }
     // Every member writes, even one without points, so each checks its data.
