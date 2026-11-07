@@ -1,0 +1,3 @@
+[env]
+# Keeps profiles from instrumented `ephyra check` builds out of the source tree.
+LLVM_PROFILE_FILE = { value = "target/profraw/%m_%p.profraw", relative = true }
