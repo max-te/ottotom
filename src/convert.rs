@@ -408,7 +408,8 @@ impl<'m> Plan<'m> {
                 .then_with(|| a.scope.version().cmp(&b.scope.version()))
                 .then_with(|| a.scope_hash.cmp(&b.scope_hash))
                 .then_with(|| a.metric.name().cmp(b.metric.name()))
-                .then_with(|| number_kind(a.metric.data()).cmp(&number_kind(b.metric.data())))
+                .then_with(|| a.metric.unit().cmp(b.metric.unit()))
+                .then_with(|| data_kind(a.metric.data()).cmp(&data_kind(b.metric.data())))
                 .then_with(|| a.metric.description().cmp(b.metric.description()))
         });
         Plan { names, members }
@@ -510,12 +511,21 @@ fn point_count(data: &AggregatedMetrics) -> usize {
     }
 }
 
-/// Orders metrics of one name that differ only in their number type.
-fn number_kind(data: &AggregatedMetrics) -> u8 {
+/// Orders metrics of one name that differ only in their number type or in
+/// their aggregation, such as a gauge and an up-down counter.
+fn data_kind(data: &AggregatedMetrics) -> (u8, u8) {
+    fn aggregation<T>(data: &MetricData<T>) -> u8 {
+        match data {
+            MetricData::Gauge(_) => 0,
+            MetricData::Sum(_) => 1,
+            MetricData::Histogram(_) => 2,
+            MetricData::ExponentialHistogram(_) => 3,
+        }
+    }
     match data {
-        AggregatedMetrics::F64(_) => 0,
-        AggregatedMetrics::U64(_) => 1,
-        AggregatedMetrics::I64(_) => 2,
+        AggregatedMetrics::F64(data) => (0, aggregation(data)),
+        AggregatedMetrics::U64(data) => (1, aggregation(data)),
+        AggregatedMetrics::I64(data) => (2, aggregation(data)),
     }
 }
 

@@ -1518,3 +1518,70 @@ fn test_family_without_kept_points_writes_no_header() {
     assert!(!text.contains("milliseconds"), "{text}");
     assert!(!text.contains("dropped"), "{text}");
 }
+
+#[test]
+fn test_series_order_does_not_depend_on_which_instrument_kind_records_first() {
+    // An up-down counter is written as a gauge, so both instruments land in family `a`.
+    let render = |gauge_first: bool| {
+        let metrics = collect_metrics(|meter| {
+            let gauge = || {
+                meter
+                    .f64_gauge("a")
+                    .build()
+                    .record(1.0, &[KeyValue::new("k", "g")]);
+            };
+            let sum = || meter.f64_up_down_counter("a").build().add(2.0, &[]);
+            if gauge_first {
+                gauge();
+                sum();
+            } else {
+                sum();
+                gauge();
+            }
+        });
+        let config = Config::builder()
+            .scope_info_enabled(false)
+            .target_info_enabled(false)
+            .build();
+        let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+        text.lines()
+            .filter(|l| l.starts_with("a{"))
+            .map(|l| l.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(render(true), render(false));
+}
+
+#[test]
+fn test_series_order_does_not_depend_on_which_unit_records_first() {
+    // `a_seconds` without a unit and `a_seconds` in `s` share the family `a_seconds`.
+    let render = |unitless_first: bool| {
+        let metrics = collect_metrics(|meter| {
+            let unitless = || meter.i64_up_down_counter("a_seconds").build().add(1, &[]);
+            let seconds = || {
+                meter
+                    .i64_up_down_counter("a_seconds")
+                    .with_unit("s")
+                    .build()
+                    .add(2, &[KeyValue::new("k", "s")]);
+            };
+            if unitless_first {
+                unitless();
+                seconds();
+            } else {
+                seconds();
+                unitless();
+            }
+        });
+        let config = Config::builder()
+            .scope_info_enabled(false)
+            .target_info_enabled(false)
+            .build();
+        let text = metrics.to_openmetrics_string_with_config(config).unwrap();
+        text.lines()
+            .filter(|l| l.starts_with("a_seconds{"))
+            .map(|l| l.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(render(true), render(false));
+}
