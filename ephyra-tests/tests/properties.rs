@@ -3,9 +3,9 @@
 //! annotation of the rule it verifies: `om[...]` for docs/spec/openmetrics.md,
 //! `c[...]` for docs/spec/conversion.md.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Once;
 
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
 use ottotom::convert::WriteOpenMetrics;
@@ -359,9 +359,18 @@ fn value_role(family: &str, typ: &str, sample: &Sample) -> Option<&'static str> 
     }
 }
 
-/// Sums the `points` fields of the warnings emitted while it is the default
-/// subscriber. The converter reports every point it drops this way.
-struct DroppedPoints(Arc<AtomicUsize>);
+/// Sums the `points` fields of warnings into the emitting thread's
+/// `DROPPED_POINTS`. The converter reports every point it drops this way.
+///
+/// It is installed as the global default, once. A subscriber installed for one
+/// thread can miss events: tracing caches per call site whether any subscriber
+/// wants it, and a property running in parallel without that subscriber can
+/// fill the cache first.
+struct DroppedPoints;
+
+thread_local! {
+    static DROPPED_POINTS: Cell<usize> = const { Cell::new(0) };
+}
 
 impl tracing::Subscriber for DroppedPoints {
     fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
@@ -398,7 +407,7 @@ impl tracing::Subscriber for DroppedPoints {
         let mut points = Points(0);
         event.record(&mut points);
         let points = usize::try_from(points.0).expect("a point count fits a usize");
-        self.0.fetch_add(points, Ordering::Relaxed);
+        DROPPED_POINTS.with(|dropped| dropped.set(dropped.get() + points));
     }
 
     fn enter(&self, _: &tracing::span::Id) {}
@@ -408,11 +417,14 @@ impl tracing::Subscriber for DroppedPoints {
 
 /// Converts `metrics`, and counts the points the warnings report as dropped.
 fn convert_counting_drops(scenario: &Scenario, metrics: &ResourceMetrics) -> (String, usize) {
-    let dropped = Arc::new(AtomicUsize::new(0));
-    let text = tracing::subscriber::with_default(DroppedPoints(Arc::clone(&dropped)), || {
-        convert(scenario, metrics)
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        tracing::subscriber::set_global_default(DroppedPoints)
+            .expect("no other global subscriber is installed");
     });
-    (text, dropped.load(Ordering::Relaxed))
+    DROPPED_POINTS.with(|dropped| dropped.set(0));
+    let text = convert(scenario, metrics);
+    (text, DROPPED_POINTS.with(Cell::get))
 }
 
 /// Removes one copy of each item of `written` from `recorded`. Panics with
