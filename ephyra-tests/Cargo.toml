@@ -5,9 +5,6 @@ edition = "2024"
 publish = false
 description = "Property-based tests for ottotom, written with ephyra"
 
-# Kept out of the ottotom workspace, so ottotom's manifest and lock file stay unchanged.
-[workspace]
-
 [dependencies]
 ottotom = { path = ".." }
 ottotom-testsupport = { path = "../testsupport" }
@@ -21,7 +18,3 @@ ephyra = "0.0.1"
 [dev-dependencies]
 openmetrics-parser = "0.4.4"
 tracing = "0.1.44"
-
-[profile.release]
-debug-assertions = true
-overflow-checks = true

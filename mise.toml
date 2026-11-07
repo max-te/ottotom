@@ -27,33 +27,27 @@ CARGO_TERM_COLOR = "always"
 description = "Run code coverage across every feature combination"
 run = [
   "cargo llvm-cov clean --workspace",
-  "cargo hack --feature-powerset --workspace llvm-cov --no-report nextest",
+  "cargo hack --feature-powerset --workspace --exclude ottotom-ephyra-tests llvm-cov --no-report nextest",
   "cargo llvm-cov report --lcov --output-path target/lcov.info",
   "cargo llvm-cov report --html --output-dir target/coverage",
   "cargo llvm-cov report",
 ]
 
 [tasks.check]
-description = "Check the workspace and the property tests for compilation errors"
-run = [
-  "cargo check --all",
-  "cargo check --all-targets --locked --manifest-path ephyra-tests/Cargo.toml",
-]
+description = "Check the workspace for compilation errors"
+run = "cargo check --all"
 
 [tasks.format]
 description = "Format all Rust source files with nightly rustfmt"
-run = [
-  "cargo +nightly fmt",
-  "cargo +nightly fmt --manifest-path ephyra-tests/Cargo.toml",
-]
+run = "cargo +nightly fmt"
 
 [tasks.test]
 description = "Run all tests with cargo nextest"
 run = "cargo nextest run"
 
 [tasks.test-all-features]
-description = "Run tests across every feature combination"
-run = "cargo hack --feature-powerset --workspace nextest run"
+description = "Run tests across every feature combination, except the property tests"
+run = "cargo hack --feature-powerset --workspace --exclude ottotom-ephyra-tests nextest run"
 
 [tasks.clippy]
 description = "Lint every feature combination, warnings are errors"
@@ -61,15 +55,13 @@ run = "cargo hack --feature-powerset --workspace clippy --all-targets -- -D warn
 
 [tasks.ephyra]
 description = "Run the ephyra property tests with CI's fixed seed"
-dir = "ephyra-tests"
 env = { EPHYRA_SEED = "1" }
-run = "cargo test --release --locked"
+run = "cargo test --profile ephyra --locked -p ottotom-ephyra-tests"
 
 [tasks.ephyra-search]
 description = "Search for property test counterexamples with a random seed"
-dir = "ephyra-tests"
 env = { EPHYRA_TESTS = "20000", EPHYRA_FAILURES = "12" }
-run = "cargo test --release --locked"
+run = "cargo test --profile ephyra --locked -p ottotom-ephyra-tests"
 
 [tasks.doc]
 description = "Build and open documentation"
