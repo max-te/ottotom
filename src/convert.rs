@@ -135,7 +135,7 @@ pub trait WriteOpenMetrics: crate::private::Sealed {
 }
 
 /// Serialization context for common variables needed during conversion.
-struct Context<'f, W: uWrite> {
+struct Context<W: uWrite> {
     /// the output [Write] reference
     f: W,
     /// the conversion configuration
@@ -152,13 +152,14 @@ struct Context<'f, W: uWrite> {
     unit: Option<Cow<'static, str>>,
     /// the OpenMetrics metric type of the current metric
     typ: &'static str,
-    /// the name of the current scope
-    scope_name: &'f str,
-    /// the version of the current scope
-    scope_version: Option<&'f str>,
+    /// the scope that tests write single metrics in
+    #[cfg(test)]
+    scope_name: &'static str,
+    #[cfg(test)]
+    scope_version: Option<&'static str>,
 }
 
-impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
+impl<'f, W: Write> Context<WriteAsUWrite<'f, W>> {
     #[cfg(test)]
     fn with_output(f: &'f mut W) -> Self {
         Self::with_config(f, Config::default())
@@ -174,7 +175,9 @@ impl<'f, W: Write> Context<'f, WriteAsUWrite<'f, W>> {
             name: String::with_capacity(64),
             unit: None,
             typ: "",
+            #[cfg(test)]
             scope_name: "",
+            #[cfg(test)]
             scope_version: None,
         }
     }
@@ -349,7 +352,7 @@ impl<'m> Plan<'m> {
     /// Places every supported metric of `scopes` in its family and orders the
     /// result by family name. Unsupported metrics are dropped with a warning.
     fn new(
-        ctx: &mut Context<'_, impl uWrite<Error = std::fmt::Error>>,
+        ctx: &mut Context<impl uWrite<Error = std::fmt::Error>>,
         scopes: &[&'m ScopeMetrics],
     ) -> Self {
         let mut names = String::new();
@@ -461,7 +464,9 @@ fn find_name_clashes(families: &[(&str, &'static str)]) -> Vec<bool> {
             let runs = &run_of[first_claim[family]..first_claim[family + 1]];
             let clashes = runs.iter().any(|&run| taken[run]);
             if !clashes {
-                runs.iter().for_each(|&run| taken[run] = true);
+                for &run in runs {
+                    taken[run] = true;
+                }
             }
             clashes
         })
@@ -478,7 +483,7 @@ fn number_kind(data: &AggregatedMetrics) -> u8 {
 }
 
 fn extract_type_unit_and_name(
-    ctx: &mut Context<'_, impl uWrite<Error = std::fmt::Error>>,
+    ctx: &mut Context<impl uWrite<Error = std::fmt::Error>>,
     metric: &Metric,
 ) -> bool {
     let Ok(typ) = get_type(metric.data()) else {
@@ -554,7 +559,7 @@ fn get_type(metric: &AggregatedMetrics) -> Result<&'static str, ()> {
 // om[impl metadata.order] - TYPE is written first, then UNIT, then HELP
 // om[impl metadata.unique] - at most one TYPE/UNIT/HELP line per family
 #[inline]
-fn write_header<U: uWrite>(ctx: &mut Context<'_, U>, description: &str) -> Result<(), U::Error> {
+fn write_header<U: uWrite>(ctx: &mut Context<U>, description: &str) -> Result<(), U::Error> {
     let Context {
         f, name, unit, typ, ..
     } = ctx;
@@ -610,13 +615,22 @@ fn write_otel_scope_info<U: uWrite>(
     Ok(())
 }
 
-/// Write all data points for this metric, in the scope set in `ctx`.
-fn write_values<U: uWrite>(
-    ctx: &mut Context<'_, U>,
-    metric: &AggregatedMetrics,
+/// Writes the points of one metric as a whole family, in the scope set in `ctx`.
+#[cfg(test)]
+fn write_in_test_scope<M: FamilyMember, U: uWrite>(
+    ctx: &mut Context<U>,
+    metric: &M,
 ) -> Result<(), U::Error> {
     let scope = (ctx.scope_name, ctx.scope_version);
     write_points(ctx, &[(scope, metric)])
+}
+
+#[cfg(test)]
+fn write_values<U: uWrite>(
+    ctx: &mut Context<U>,
+    metric: &AggregatedMetrics,
+) -> Result<(), U::Error> {
+    write_in_test_scope(ctx, metric)
 }
 
 /// The name and version of an instrumentation scope.
@@ -632,7 +646,7 @@ struct LabeledPoint {
     /// byte range of the label set
     start: usize,
     end: usize,
-    /// the label set's [`sort_key`], set while sorting
+    /// scratch for [`sort_by_label_set`], meaningless outside of it
     key: u64,
 }
 
@@ -644,7 +658,7 @@ struct LabeledPoint {
 // c[impl resource.attrs] - resource attributes are dropped: labels on metric
 // families carry only point and scope attributes, never resource attributes
 fn write_points<M: FamilyMember, U: uWrite>(
-    ctx: &mut Context<'_, U>,
+    ctx: &mut Context<U>,
     members: &[(ScopeLabels<'_>, &M)],
 ) -> Result<(), U::Error> {
     // Taken out of `ctx` while the members write, so their capacity is reused.
@@ -656,15 +670,15 @@ fn write_points<M: FamilyMember, U: uWrite>(
     for (member, (scope, data)) in members.iter().enumerate() {
         data.render_labels(ctx, *scope, member, &mut text, &mut points);
     }
-    drop_repeated_label_sets(&ctx.name, &text, &mut points, |member| {
+    drop_repeated_label_sets(&ctx.name, &text, &mut points, members.len(), |member| {
         members[member].1.hash_points()
     });
 
+    // Every member writes, even one without points, so each checks its data.
     let mut written = Ok(());
     let mut rest = points.as_slice();
     for (member, (_, data)) in members.iter().enumerate() {
-        let len = rest.iter().take_while(|p| p.member == member).count();
-        let (own, later) = rest.split_at(len);
+        let (own, later) = rest.split_at(rest.partition_point(|p| p.member == member));
         rest = later;
         written = data.write_labeled(ctx, own, &text);
         if written.is_err() {
@@ -689,12 +703,14 @@ fn drop_repeated_label_sets(
     family: &str,
     text: &str,
     points: &mut Vec<LabeledPoint>,
+    members: usize,
     point_hashes: impl Fn(usize) -> Vec<u64>,
 ) {
     sort_by_label_set(text.as_bytes(), points, 0, 0);
     let label_set = |p: &LabeledPoint| &text[p.start..p.end];
 
-    let mut hashes: Vec<(usize, Vec<u64>)> = Vec::new();
+    let mut hashes: Vec<Option<Vec<u64>>> = vec![None; members];
+    // Survivors are moved to the front, so the runs are tracked by index.
     let mut kept = 0;
     let mut start = 0;
     while start < points.len() {
@@ -707,23 +723,17 @@ fn drop_repeated_label_sets(
         start += len;
 
         let first_member = run[0].member;
-        let candidates = run.iter().take_while(|p| p.member == first_member);
-        let survivor = if candidates.clone().nth(1).is_none() {
-            run[0]
+        let candidates = &run[..run.partition_point(|p| p.member == first_member)];
+        let survivor = if let [only] = candidates {
+            *only
         } else {
-            let index = match hashes.iter().position(|(m, _)| *m == first_member) {
-                Some(index) => index,
-                None => {
-                    hashes.push((first_member, point_hashes(first_member)));
-                    hashes.len() - 1
-                }
-            };
-            let member_hashes = &hashes[index].1;
+            let member_hashes =
+                hashes[first_member].get_or_insert_with(|| point_hashes(first_member));
             *candidates
+                .iter()
                 .min_by_key(|p| (member_hashes[p.point], p.point))
                 .expect("a run is never empty")
         };
-        let labels = &text[survivor.start..survivor.end];
         for _ in 1..len {
             // c[impl metadata.drop-warn]
             warn!("Dropping a point of {family}: its label set {{{labels}}} is already written");
@@ -733,6 +743,8 @@ fn drop_repeated_label_sets(
     }
     points.truncate(kept);
 
+    // A stable sort allocates scratch space even for sorted input, which is
+    // what a family of one metric always is.
     if !points.is_sorted_by_key(|p| p.member) {
         points.sort_by_key(|p| p.member);
     }
@@ -773,24 +785,15 @@ fn sort_by_label_set(text: &[u8], points: &mut [LabeledPoint], skip: usize, dept
     // The key pads short label sets with zeros, and label values may hold NUL
     // bytes. Of two label sets with the same key, the one with fewer bytes
     // left is the smaller, unless both go on past the key.
-    let left = |p: &LabeledPoint| (p.end - p.start - skip).min(8);
-    let rank =
-        |p: &LabeledPoint| (u128::from(p.key) << 64) | ((left(p) as u128) << 60) | p.member as u128;
-    points.sort_unstable_by_key(rank);
+    let group = |p: &LabeledPoint| (p.key, (p.end - p.start - skip).min(8));
+    points.sort_unstable_by_key(|p| (group(p), p.member));
 
-    let mut start = 0;
-    while start < points.len() {
-        let group = |p: &LabeledPoint| (p.key, left(p));
-        let key = group(&points[start]);
-        let len = points[start..]
-            .iter()
-            .take_while(|p| group(p) == key)
-            .count();
+    for run in points.chunk_by_mut(|a, b| group(a) == group(b)) {
         // Label sets that go on past an equal key are ordered by what follows.
-        if len > 1 && key.1 == 8 {
-            sort_by_label_set(text, &mut points[start..start + len], skip + 8, depth + 1);
+        let goes_on = group(&run[0]).1 == 8;
+        if run.len() > 1 && goes_on {
+            sort_by_label_set(text, run, skip + 8, depth + 1);
         }
-        start += len;
     }
 }
 
@@ -826,7 +829,7 @@ trait FamilyMember {
     /// in `points`. A point that would shadow a reserved label is skipped.
     fn render_labels<U: uWrite>(
         &self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         scope: ScopeLabels<'_>,
         member: usize,
         text: &mut String,
@@ -839,7 +842,7 @@ trait FamilyMember {
     /// Writes `points` of this metric, in the given order.
     fn write_labeled<U: uWrite>(
         &self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         points: &[LabeledPoint],
         text: &str,
     ) -> Result<(), U::Error>;
@@ -858,7 +861,7 @@ trait DataPoints {
     /// Writes the samples of `points`, each with its rendered label set.
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error>;
 }
@@ -866,7 +869,7 @@ trait DataPoints {
 impl<D: DataPoints> FamilyMember for D {
     fn render_labels<U: uWrite>(
         &self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         (scope_name, scope_version): ScopeLabels<'_>,
         member: usize,
         text: &mut String,
@@ -912,7 +915,7 @@ impl<D: DataPoints> FamilyMember for D {
 
     fn write_labeled<U: uWrite>(
         &self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         points: &[LabeledPoint],
         text: &str,
     ) -> Result<(), U::Error> {
@@ -951,13 +954,13 @@ macro_rules! with_data_points {
 impl FamilyMember for AggregatedMetrics {
     fn render_labels<U: uWrite>(
         &self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         scope: ScopeLabels<'_>,
         member: usize,
         text: &mut String,
         points: &mut Vec<LabeledPoint>,
     ) {
-        with_data_points!(self, data => data.render_labels(ctx, scope, member, text, points))
+        with_data_points!(self, data => data.render_labels(ctx, scope, member, text, points));
     }
 
     fn hash_points(&self) -> Vec<u64> {
@@ -966,7 +969,7 @@ impl FamilyMember for AggregatedMetrics {
 
     fn write_labeled<U: uWrite>(
         &self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         points: &[LabeledPoint],
         text: &str,
     ) -> Result<(), U::Error> {
@@ -1003,12 +1006,12 @@ fn write_bucket_exemplar<'a, E: ExemplarPoint + 'a, U: uWrite>(
     )
 }
 
+#[cfg(test)]
 fn write_histogram<T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<'_, U>,
+    ctx: &mut Context<U>,
     histogram: &Histogram<T>,
 ) -> Result<(), U::Error> {
-    let scope = (ctx.scope_name, ctx.scope_version);
-    write_points(ctx, &[(scope, histogram)])
+    write_in_test_scope(ctx, histogram)
 }
 
 impl<T: Numeric + Copy> DataPoints for Histogram<T> {
@@ -1025,21 +1028,18 @@ impl<T: Numeric + Copy> DataPoints for Histogram<T> {
 
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error> {
         write_histogram_samples(ctx, self, points)
     }
 }
 
-fn write_histogram_samples<'p, T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<'_, U>,
+fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
+    ctx: &mut Context<U>,
     histogram: &Histogram<T>,
     points: impl Iterator<Item = (&'p HistogramDataPoint<T>, &'p str)>,
-) -> Result<(), U::Error>
-where
-    T: 'p,
-{
+) -> Result<(), U::Error> {
     let ts = to_timestamp(histogram.time());
     let created = to_timestamp(histogram.start_time());
     assert_eq!(
@@ -1157,12 +1157,12 @@ where
     Ok(())
 }
 
+#[cfg(test)]
 fn write_counter<T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<'_, U>,
+    ctx: &mut Context<U>,
     sum: &Sum<T>,
 ) -> Result<(), U::Error> {
-    let scope = (ctx.scope_name, ctx.scope_version);
-    write_points(ctx, &[(scope, sum)])
+    write_in_test_scope(ctx, sum)
 }
 
 impl<T: Numeric + Copy> DataPoints for Sum<T> {
@@ -1179,21 +1179,18 @@ impl<T: Numeric + Copy> DataPoints for Sum<T> {
 
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error> {
         write_counter_samples(ctx, self, points)
     }
 }
 
-fn write_counter_samples<'p, T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<'_, U>,
+fn write_counter_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
+    ctx: &mut Context<U>,
     sum: &Sum<T>,
     points: impl Iterator<Item = (&'p SumDataPoint<T>, &'p str)>,
-) -> Result<(), U::Error>
-where
-    T: 'p,
-{
+) -> Result<(), U::Error> {
     assert_eq!(
         sum.temporality(),
         opentelemetry_sdk::metrics::Temporality::Cumulative,
@@ -1248,12 +1245,12 @@ where
     Ok(())
 }
 
+#[cfg(test)]
 fn write_gauge<T: Numeric + Copy, U: uWrite>(
-    ctx: &mut Context<'_, U>,
+    ctx: &mut Context<U>,
     gauge: &Gauge<T>,
 ) -> Result<(), U::Error> {
-    let scope = (ctx.scope_name, ctx.scope_version);
-    write_points(ctx, &[(scope, gauge)])
+    write_in_test_scope(ctx, gauge)
 }
 
 impl<T: Numeric + Copy> DataPoints for Gauge<T> {
@@ -1270,7 +1267,7 @@ impl<T: Numeric + Copy> DataPoints for Gauge<T> {
 
     fn write_samples<'p, U: uWrite>(
         &'p self,
-        ctx: &mut Context<'_, U>,
+        ctx: &mut Context<U>,
         points: impl Iterator<Item = (&'p Self::Point, &'p str)>,
     ) -> Result<(), U::Error> {
         let ts = to_timestamp(self.time());
