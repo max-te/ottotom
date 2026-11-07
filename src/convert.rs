@@ -303,10 +303,6 @@ impl WriteOpenMetrics for ResourceMetrics {
                 .map(|member| member.metric.description())
                 .find(|description| !description.is_empty())
                 .unwrap_or_default();
-            let mut family_ctx = ctx.family(name, typ, unit.as_deref());
-            // om[impl metadata.unique] - one header per family, however many metrics it holds
-            write_header(&mut family_ctx, description)?;
-
             // c[impl metadata.conflict-keep-points] - every member of the family's type is written
             let mut written = Vec::with_capacity(family.len());
             for member in family.iter() {
@@ -322,7 +318,8 @@ impl WriteOpenMetrics for ResourceMetrics {
                 let scope = (member.scope.name(), member.scope.version());
                 written.push((scope, member.metric.data()));
             }
-            write_points(&mut family_ctx, &written)?;
+            let mut family_ctx = ctx.family(name, typ, unit.as_deref());
+            write_points(&mut family_ctx, Some(description), &written)?;
         }
         // om[impl text.eof]
         f.write_str("# EOF\n")?;
@@ -643,7 +640,7 @@ fn write_in_test_scope<M: FamilyMember, U: uWrite>(
     metric: &M,
 ) -> Result<(), U::Error> {
     let scope = (family.ctx.scope_name, family.ctx.scope_version);
-    write_points(family, &[(scope, metric)])
+    write_points(family, None, &[(scope, metric)])
 }
 
 #[cfg(test)]
@@ -676,10 +673,14 @@ struct LabeledPoint {
 ///
 /// Each metric's points are written in the order of their label sets. A point
 /// whose label set another point of the family already has is dropped.
+///
+/// With `help`, the family's header is written first, with `help` as its HELP
+/// text. A family whose points are all dropped then writes nothing at all.
 // c[impl resource.attrs] - resource attributes are dropped: labels on metric
 // families carry only point and scope attributes, never resource attributes
 fn write_points<M: FamilyMember, U: uWrite>(
     family: &mut FamilyContext<'_, U>,
+    help: Option<&str>,
     members: &[(ScopeLabels<'_>, &M)],
 ) -> Result<(), U::Error> {
     // Taken out of `family` while the members write, so their capacity is reused.
@@ -695,21 +696,38 @@ fn write_points<M: FamilyMember, U: uWrite>(
         members[member].1.hash_points()
     });
 
-    // Every member writes, even one without points, so each checks its data.
-    let mut written = Ok(());
-    let mut rest = points.as_slice();
-    for (member, (_, data)) in members.iter().enumerate() {
-        let (own, later) = rest.split_at(rest.partition_point(|p| p.member == member));
-        rest = later;
-        written = data.write_labeled(family, own, &text);
-        if written.is_err() {
-            break;
-        }
-    }
+    let written = write_kept_points(family, help, members, &points, &text);
 
     family.ctx.attr_buffer = text;
     family.ctx.labeled_points = points;
     written
+}
+
+/// Writes the header, if `help` is given, and then the kept `points`, grouped
+/// by member.
+fn write_kept_points<M: FamilyMember, U: uWrite>(
+    family: &mut FamilyContext<'_, U>,
+    help: Option<&str>,
+    members: &[(ScopeLabels<'_>, &M)],
+    points: &[LabeledPoint],
+    text: &str,
+) -> Result<(), U::Error> {
+    if let Some(help) = help {
+        // A header alone carries no data, and strict parsers reject an empty family.
+        if points.is_empty() {
+            return Ok(());
+        }
+        // om[impl metadata.unique] - one header per family, however many metrics it holds
+        write_header(family, help)?;
+    }
+    // Every member writes, even one without points, so each checks its data.
+    let mut rest = points;
+    for (member, (_, data)) in members.iter().enumerate() {
+        let (own, later) = rest.split_at(rest.partition_point(|p| p.member == member));
+        rest = later;
+        data.write_labeled(family, own, text)?;
+    }
+    Ok(())
 }
 
 /// Sorts `points` by label set and keeps one point per label set, then groups

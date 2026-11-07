@@ -1492,3 +1492,29 @@ fn test_sort_by_label_set_orders_as_bytes_do() {
         assert_eq!(order(&points), order(&expected), "prefix {prefix:?}");
     }
 }
+
+#[test]
+fn test_family_without_kept_points_writes_no_header() {
+    // The gauge's only point shadows the reserved `otel_scope_name` label.
+    let metrics = collect_metrics(|meter| {
+        meter
+            .u64_gauge("a")
+            .with_unit("ms")
+            .with_description("dropped")
+            .build()
+            .record(1, &[KeyValue::new("otel_scope_name", "x")]);
+        meter.u64_counter("b").build().add(1, &[]);
+    });
+    let text = metrics.to_openmetrics_string().unwrap();
+    assert_eq!(
+        type_lines(&text),
+        [
+            "# TYPE target info",
+            "# TYPE otel_scope info",
+            "# TYPE b counter"
+        ],
+        "{text}"
+    );
+    assert!(!text.contains("milliseconds"), "{text}");
+    assert!(!text.contains("dropped"), "{text}");
+}
