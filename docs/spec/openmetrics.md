@@ -178,7 +178,10 @@ contain a list of one or more MetricPoints. Metrics with the same name for a
 given MetricFamily SHOULD have the same set of label names in their LabelSet.
 
 A **MetricFamily** is a group of Metrics sharing a name, HELP, TYPE, and UNIT
-metadata. Every Metric within a MetricFamily MUST have a unique LabelSet.
+metadata.
+
+om[metricfamily.unique-labelset]
+Every Metric within a MetricFamily MUST have a unique LabelSet.
 
 A **MetricSet** is the top level object exposed by OpenMetrics. It MUST consist
 of MetricFamilies and MAY be empty.
