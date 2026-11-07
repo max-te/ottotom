@@ -219,19 +219,57 @@ impl WriteOpenMetrics for ResourceMetrics {
             write_otel_scope_info(&mut ctx.f, &scopes, ctx.config)?;
         }
 
-        let Plan { names, members } = Plan::new(&mut ctx, &scopes);
+        let Plan { names, mut members } = Plan::new(&mut ctx, &scopes);
+        let family_name = |member: &Member<'_>| &names[member.family.0..member.family.1];
+        let mut start = 0;
         // om[impl metricfamily.nointerleave] - each MetricFamily is fully written before the next
-        for member in members {
+        while start < members.len() {
+            // The plan is ordered by family name, so a family's members are adjacent.
+            let name = family_name(&members[start]);
+            let len = members[start..]
+                .iter()
+                .take_while(|member| family_name(member) == name)
+                .count();
+            let family = &mut members[start..start + len];
+            start += len;
+
+            // c[impl metadata.conflict-type] - the plan orders by type within a
+            // family, so the first member's type wins
+            let typ = family[0].typ;
             ctx.name.clear();
-            ctx.name.push_str(&names[member.family.0..member.family.1]);
-            ctx.typ = member.typ;
-            ctx.unit = member.unit;
-            if ctx.config.scope_info_enabled {
-                ctx.scope_name = member.scope.name();
-                ctx.scope_version = member.scope.version();
+            ctx.name.push_str(name);
+            ctx.typ = typ;
+            // c[impl metadata.conflict-unit-help] - the first UNIT and HELP are kept
+            ctx.unit = family
+                .iter_mut()
+                .filter(|member| member.typ == typ)
+                .find_map(|member| member.unit.take());
+            let description = family
+                .iter()
+                .filter(|member| member.typ == typ)
+                .map(|member| member.metric.description())
+                .find(|description| !description.is_empty())
+                .unwrap_or_default();
+            // om[impl metadata.unique] - one header per family, however many metrics it holds
+            write_header(&mut ctx, description)?;
+
+            // c[impl metadata.conflict-keep-points] - every member of the family's type is written
+            for member in family.iter() {
+                if member.typ != typ {
+                    // c[impl metadata.drop-warn]
+                    warn!(
+                        "Dropping metric {:?}: family {name} is already of type {typ}, not {}",
+                        member.metric.name(),
+                        member.typ
+                    );
+                    continue;
+                }
+                if ctx.config.scope_info_enabled {
+                    ctx.scope_name = member.scope.name();
+                    ctx.scope_version = member.scope.version();
+                }
+                write_values(&mut ctx, member.metric.data())?;
             }
-            write_header(&mut ctx, member.metric.description())?;
-            write_values(&mut ctx, member.metric.data())?;
         }
         // om[impl text.eof]
         f.write_str("# EOF\n")?;
