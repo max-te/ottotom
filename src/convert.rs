@@ -475,19 +475,25 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             ts,
         )?;
 
+        // c[impl histogram.bucket]
+        let bounds: Vec<_> = point.bounds().collect();
+        // c[impl histogram.sum] - {name}_sum only if the sum is positive and monotonic
+        // om[impl histogram.negative-threshold-nosum]
+        // TODO: monitor if opentelmetry-sdk introduces positive f64 histograms?
+        let has_sum = (T::is_unsigned() || point.min().as_ref().is_some_and(T::is_nonnegative))
+            && bounds.iter().all(|bound| *bound >= 0.0);
         // om[impl metricpoint.nointerleave] - all value samples of one MetricPoint are written contiguously
-        // c[impl histogram.count]
-        uwriteln!(
-            ctx.f,
-            "{}_count{{{}}} {} {}",
-            ctx.name,
-            attrs,
-            point.count().fast_display(),
-            ts
-        )?;
-        if T::is_unsigned() || point.min().as_ref().is_some_and(T::is_nonnegative) {
-            // c[impl histogram.sum] - {name}_sum only if the sum is positive and monotonic
-            // TODO: monitor if opentelmetry-sdk introduces positive f64 histograms?
+        // om[impl histogram.count-iff-sum] - the +Inf bucket still carries the count
+        if has_sum {
+            // c[impl histogram.count] - except without a sum, where OpenMetrics forbids it
+            uwriteln!(
+                ctx.f,
+                "{}_count{{{}}} {} {}",
+                ctx.name,
+                attrs,
+                point.count().fast_display(),
+                ts
+            )?;
             uwriteln!(
                 ctx.f,
                 "{}_sum{{{}}} {} {}",
@@ -527,8 +533,6 @@ fn write_histogram<T: Numeric + Copy, U: uWrite>(
             attrs.push(',');
         }
         let mut cumulative_count = 0;
-        // c[impl histogram.bucket]
-        let bounds: Vec<_> = point.bounds().collect();
         for (i, (bound, count)) in std::iter::zip(&bounds, point.bucket_counts()).enumerate() {
             // c[impl histogram.bucket.cumulative]
             cumulative_count += count;
