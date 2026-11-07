@@ -8,7 +8,7 @@ specs (
                 name rust
                 include (src/**/*.rs)
                 exclude (target/**)
-                test_include (src/**/tests.rs tests/**/*.rs testsupport/**/*.rs)
+                test_include (src/**/tests.rs tests/**/*.rs testsupport/**/*.rs ephyra-tests/tests/**/*.rs)
             }
         )
     }
@@ -21,7 +21,7 @@ specs (
                 name rust
                 include (src/**/*.rs)
                 exclude (target/**)
-                test_include (src/**/tests.rs tests/**/*.rs testsupport/**/*.rs)
+                test_include (src/**/tests.rs tests/**/*.rs testsupport/**/*.rs ephyra-tests/tests/**/*.rs)
             }
         )
     }
