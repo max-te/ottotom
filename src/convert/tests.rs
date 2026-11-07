@@ -1585,3 +1585,28 @@ fn test_series_order_does_not_depend_on_which_unit_records_first() {
     };
     assert_eq!(render(true), render(false));
 }
+
+#[test]
+fn test_le_labels_follow_changing_bounds() {
+    let mut le = LeLabels::default();
+    let labels = |le: &LeLabels| {
+        (0..le.bounds.len())
+            .map(|i| le.label(i).to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    le.update([0.0, 1e6, 2.5].into_iter());
+    assert_eq!(labels(&le), ["0.0", "1e+06", "2.5"]);
+    le.update([0.0, 1e6, 2.5].into_iter());
+    assert_eq!(labels(&le), ["0.0", "1e+06", "2.5"]);
+    // -0.0 equals 0.0, but renders differently.
+    le.update([-0.0, 1e6, 2.5].into_iter());
+    assert_eq!(labels(&le), ["-0.0", "1e+06", "2.5"]);
+    le.update([-0.0, 7.0].into_iter());
+    assert_eq!(labels(&le), ["-0.0", "7.0"]);
+    le.update([-0.0, 7.0, 1e-5, 8.0].into_iter());
+    assert_eq!(labels(&le), ["-0.0", "7.0", "1e-05", "8.0"]);
+    le.update(std::iter::empty());
+    assert!(labels(&le).is_empty());
+    assert!(le.text.is_empty());
+}
