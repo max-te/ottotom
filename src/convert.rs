@@ -781,18 +781,27 @@ fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str, kind: NameKind) -> Res
         f.write_char('_')?;
         previous_was_underscore = true;
     }
-    for c in name.chars() {
+    // Allowed characters are written in runs, one `write_str` per run. They are
+    // all ASCII, so scanning bytes is enough: the bytes of a multi-byte char are
+    // all invalid and collapse into one `_`, and every run boundary sits next to
+    // an ASCII byte, which is always a char boundary.
+    let mut run_start = 0;
+    for (i, &byte) in name.as_bytes().iter().enumerate() {
         // Allowed characters are `a-z A-Z 0-9 : _`, except for ':' in labels
         // Invalid characters in the metric name MUST be replaced with the `_` character.
-        if c.is_ascii_alphanumeric() || (c == ':' && kind == NameKind::Metric) {
-            f.write_char(c)?;
-            previous_was_underscore = false;
-        } else {
-            if !previous_was_underscore {
-                f.write_char('_')?;
+        if byte.is_ascii_alphanumeric() || (byte == b':' && kind == NameKind::Metric) {
+            if previous_was_underscore {
+                run_start = i;
+                previous_was_underscore = false;
             }
+        } else if !previous_was_underscore {
+            f.write_str(&name[run_start..i])?;
+            f.write_char('_')?;
             previous_was_underscore = true;
         }
+    }
+    if !previous_was_underscore {
+        f.write_str(&name[run_start..])?;
     }
     Ok(())
 }
