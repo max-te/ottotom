@@ -33,6 +33,29 @@ fn is_metric_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
 }
 
+/// Whether the samples of some family in `text` carry different sets of label
+/// names. In a histogram, `le` is left out, because only buckets carry it.
+fn label_names_differ_within_a_family(text: &str) -> bool {
+    let Ok(lines) = exposition::parse(text) else {
+        return false;
+    };
+    let mut names_by_family: HashMap<&str, Vec<&str>> = HashMap::new();
+    exposition::samples_by_family(&lines).iter().any(|s| {
+        let mut names: Vec<&str> = s
+            .sample
+            .labels
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        names.retain(|name| s.typ != "histogram" || *name != "le");
+        names.sort_unstable();
+        names_by_family
+            .entry(s.family)
+            .or_insert_with(|| names.clone())
+            != &names
+    })
+}
+
 #[ephyra::test(gen = scenario(), tests = 2000)]
 fn output_is_accepted_by_openmetrics_parser(scenario: Scenario) {
     let text = convert(&scenario, &sdk::collect(&scenario, Order::AsWritten));
@@ -54,6 +77,15 @@ fn output_is_accepted_by_openmetrics_parser(scenario: Scenario) {
             if message.contains("different label sets")
                 || message.ends_with("metrics can't have units")
                 || message.starts_with("Invalid Name in metric family") => {}
+        // - The same SHOULD again: once label names differ, the parser compares
+        //   label values only, so `{a="1"}` and `{b="1"}` count as the same
+        //   Metric, repeated or interleaved. `output_is_well_formed` checks
+        //   both rules on the full label sets.
+        Err(openmetrics_parser::ParseError::DuplicateMetric)
+            if label_names_differ_within_a_family(&parseable) => {}
+        Err(openmetrics_parser::ParseError::InvalidMetric(message))
+            if message.starts_with("Interwoven labelsets")
+                && label_names_differ_within_a_family(&parseable) => {}
         Err(error) => {
             let kind = match &error {
                 openmetrics_parser::ParseError::ParseError(message) => {
@@ -157,7 +189,39 @@ fn output_is_well_formed(scenario: Scenario) {
         );
     }
 
-    // OpenMetrics data model: every Metric within a MetricFamily has a unique LabelSet.
+    // om[verify metric.nointerleave] - the samples of one label set are adjacent
+    // within their family. In a histogram, `le` tells the buckets of one Metric
+    // apart, so it is left out there.
+    let mut finished = HashSet::new();
+    let mut current: Option<(&str, Vec<(&str, &str)>)> = None;
+    for FamilySample {
+        family,
+        typ,
+        sample,
+    } in &samples
+    {
+        let mut labels: Vec<(&str, &str)> = sample
+            .labels
+            .iter()
+            .filter(|(name, _)| *typ != "histogram" || name != "le")
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        labels.sort_unstable();
+        let metric = (*family, labels);
+        if current.as_ref() != Some(&metric) {
+            if let Some(previous) = current.replace(metric.clone()) {
+                finished.insert(previous);
+            }
+            assert!(
+                !finished.contains(&metric),
+                "label set {:?} of family {:?} is interleaved\n{text}",
+                metric.1,
+                metric.0
+            );
+        }
+    }
+
+    // om[verify metricfamily.unique-labelset]
     let mut label_sets = HashSet::new();
     for FamilySample { sample, .. } in &samples {
         let mut labels = sample.labels.clone();
