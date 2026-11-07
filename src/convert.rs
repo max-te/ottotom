@@ -3,7 +3,7 @@ use std::fmt::Write;
 use std::hash::{DefaultHasher, Hasher};
 use std::time::SystemTime;
 
-use crate::format::Numeric;
+use crate::format::{Numeric, canonical_display};
 use opentelemetry::{Array, InstrumentationScope, Key, KeyValue, SpanId, TraceId, Value};
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
@@ -1198,6 +1198,8 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
             // c[impl histogram.bucket.cumulative]
             cumulative_count += count;
             // c[impl histogram.bucket.le]
+            // om[impl histogram.sorted] - the SDK keeps bounds sorted, and `le`
+            // values are canonical numbers
             uwrite!(
                 // Not using write! here is a ~19% speedup
                 family.ctx.f,
@@ -1205,7 +1207,7 @@ fn write_histogram_samples<'p, T: Numeric + Copy + 'p, U: uWrite>(
                 family.name,
                 attrs,
                 le_separator,
-                bound.fast_display(),
+                canonical_display(*bound),
                 cumulative_count.fast_display(),
                 ts,
             )?;
