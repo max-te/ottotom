@@ -14,7 +14,7 @@ use ottotom::convert::{Config, WriteOpenMetrics};
 use ottotom_testsupport::resource_metrics::{
     counter_metrics, gauge_metrics, histogram_metrics, make_large_test_metrics, make_test_metrics,
 };
-use tango_bench::{Benchmark, IntoBenchmarks, benchmark_fn, tango_benchmarks, tango_main};
+use tango_bench::{Benchmark, IntoBenchmarks, benchmark_fn, tango_benchmarks};
 
 /// Number of distinct attribute sets used by the scaling benchmarks.
 const POINT_COUNTS: [usize; 3] = [16, 256, 2048];
@@ -91,7 +91,6 @@ fn scale_bench<M: tango_bench::Metric + 'static>(
 }
 
 tango_benchmarks!(benchmarks());
-tango_main!();
 
 #[global_allocator]
 static GLOBAL: NeverGrowInPlaceAllocator = NeverGrowInPlaceAllocator;

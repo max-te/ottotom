@@ -62,7 +62,7 @@ default = ["tracing", "exporter"]
 [dev-dependencies]
 ottotom-testsupport.workspace = true
 openmetrics-parser = "0.5.1"
-tango-bench = "0.7"
+tango-bench = "0.9"
 insta = { version = "1.49.0" }
 mutants = "0.0.4"
 divan = { version = "5.0.1", package = "codspeed-divan-compat" }
