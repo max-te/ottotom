@@ -5,8 +5,10 @@
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt;
 use std::sync::Once;
 
+use ephyra::{Arbitrary, Gen, GenExt, gens};
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
 use ottotom::convert::WriteOpenMetrics;
 use ottotom_ephyra_tests::exposition::{self, FamilySample, Line, Number, Sample};
@@ -638,4 +640,97 @@ fn output_does_not_depend_on_recording_order(scenario: Scenario) {
         without_times(&reversed_lines),
         "\n{forward}\n---\n{reversed}"
     );
+}
+
+/// Accepts writes up to `capacity` bytes in total. The first write that would
+/// exceed it fails, and so does every write after it.
+struct FailingWriter {
+    capacity: usize,
+    text: String,
+    failed: bool,
+    writes_after_failure: usize,
+}
+
+impl FailingWriter {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            text: String::new(),
+            failed: false,
+            writes_after_failure: 0,
+        }
+    }
+}
+
+impl fmt::Write for FailingWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        if self.failed {
+            self.writes_after_failure += 1;
+            return Err(fmt::Error);
+        }
+        if self.text.len() + s.len() > self.capacity {
+            self.failed = true;
+            return Err(fmt::Error);
+        }
+        self.text.push_str(s);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Arbitrary)]
+struct Truncation {
+    // A bare `scenario()` would name the field, not the generator.
+    #[ephyra(gen = ottotom_ephyra_tests::scenario::scenario())]
+    scenario: Scenario,
+    /// The writer's capacity, in thousandths of the full output's length.
+    #[ephyra(gen = capacities())]
+    permille: usize,
+}
+
+/// Mostly a capacity that cuts the output short, sometimes the full length.
+#[ephyra::generator]
+fn capacities() -> impl Gen<Value = usize> {
+    gens::frequency(vec![
+        (9, gens::int(0usize..=1000).boxed()),
+        (1, gens::constant(1000usize).boxed()),
+    ])
+}
+
+#[ephyra::generator]
+fn truncations() -> impl Gen<Value = Truncation> {
+    ephyra::any::<Truncation>()
+}
+
+#[ephyra::test(gen = truncations(), tests = 2000)]
+fn writer_errors_end_the_conversion(truncation: Truncation) {
+    let Truncation { scenario, permille } = truncation;
+    let metrics = sdk::collect(&scenario, Order::AsWritten);
+    let full = convert(&scenario, &metrics);
+    let mut writer = FailingWriter::new(full.len() * permille / 1000);
+    let result = metrics.write_as_openmetrics_with_config(&mut writer, sdk::config(&scenario));
+    ephyra::classify(writer.failed, "the writer failed");
+
+    assert_eq!(
+        writer.failed,
+        full.len() > writer.capacity,
+        "the writer failed on output that fits, or accepted more than fits"
+    );
+    assert_eq!(
+        result.is_err(),
+        writer.failed,
+        "the result does not report the writer's failure"
+    );
+    assert_eq!(
+        writer.writes_after_failure, 0,
+        "the converter kept writing after an error"
+    );
+    if writer.failed {
+        assert!(
+            full.starts_with(&writer.text),
+            "the text before the failure is not a prefix of the full output\n{}\n---\n{full}",
+            writer.text
+        );
+    } else {
+        assert_eq!(writer.text, full);
+    }
 }
