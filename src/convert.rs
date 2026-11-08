@@ -1338,7 +1338,7 @@ fn keeps_reserved_labels<'a>(
     false
 }
 
-/// Get a [`Display`] implementation which shows [`SystemTime`] as a unix timestamp in float seconds.
+/// Get a [`uDisplay`] implementation which shows [`SystemTime`] as a unix timestamp in float seconds.
 // om[impl timestamp.unix]
 fn to_timestamp(time: SystemTime) -> impl uDisplay {
     let ts = time
