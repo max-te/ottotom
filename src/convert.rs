@@ -1,19 +1,28 @@
 use std::borrow::Cow;
 use std::fmt::Write;
-use std::hash::{DefaultHasher, Hasher};
 use std::time::SystemTime;
 
 use crate::format::{Numeric, canonical_display};
-use opentelemetry::{Array, InstrumentationScope, Key, KeyValue, SpanId, TraceId, Value};
+use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
-    AggregatedMetrics, Exemplar, Gauge, GaugeDataPoint, Histogram, HistogramDataPoint, MetricData,
+    AggregatedMetrics, Gauge, GaugeDataPoint, Histogram, HistogramDataPoint, MetricData,
     ResourceMetrics, Sum, SumDataPoint,
 };
 use opentelemetry_sdk::metrics::data::{Metric, ScopeMetrics};
 use ufmt::{uDisplay, uWrite, uwrite, uwriteln};
 use unit::get_unit_suffixes;
 
+use exemplar::{write_bucket_exemplar, write_exemplar};
+use label_sets::{LabeledPoint, drop_repeated_label_sets};
+use labels::{
+    LabelScratch, NameKind, hash_attrs, sanitizes_to, write_attrs_tuple, write_attrs_with,
+    write_escaped, write_sanitized_name,
+};
+
+mod exemplar;
+mod label_sets;
+mod labels;
 #[cfg(test)]
 mod tests;
 mod unit;
@@ -692,20 +701,6 @@ fn write_values<U: uWrite>(
 /// The name and version of an instrumentation scope.
 type ScopeLabels<'s> = (&'s str, Option<&'s str>);
 
-/// A point of a family, with its label set rendered into `Context::attr_buffer`.
-#[derive(Clone, Copy)]
-struct LabeledPoint {
-    /// index of the metric in the family's members
-    member: usize,
-    /// index of the point in its metric's data points
-    point: usize,
-    /// byte range of the label set
-    start: usize,
-    end: usize,
-    /// scratch for [`sort_by_label_set`], meaningless outside of it
-    key: u64,
-}
-
 /// Writes the points of one family. `members` holds each metric of the family
 /// with the scope it was recorded in.
 ///
@@ -767,141 +762,6 @@ fn write_kept_points<M: FamilyMember, U: uWrite>(
         data.write_labeled(family, own, text)?;
     }
     Ok(())
-}
-
-/// Sorts `points` by label set and keeps one point per label set, then groups
-/// the kept points by member.
-///
-/// Of the points sharing a label set, the one of the first member is kept.
-/// Within one member, the SDK's point order is arbitrary, so the point with the
-/// smallest [`hash_attrs`] is kept. `point_hashes` gives those hashes for all
-/// points of a member, and is called only for such repeats.
-// om[impl metricfamily.unique-labelset]
-fn drop_repeated_label_sets(
-    family: &str,
-    text: &str,
-    points: &mut Vec<LabeledPoint>,
-    members: usize,
-    point_hashes: impl Fn(usize) -> Vec<u64>,
-) {
-    sort_by_label_set(text.as_bytes(), points, 0, 0);
-    let label_set = |p: &LabeledPoint| &text[p.start..p.end];
-
-    let mut hashes: Vec<Option<Vec<u64>>> = vec![None; members];
-    // Survivors are moved to the front, so the runs are tracked by index.
-    let mut kept = 0;
-    let mut start = 0;
-    while start < points.len() {
-        let labels = label_set(&points[start]);
-        let len = points[start..]
-            .iter()
-            .take_while(|p| label_set(p) == labels)
-            .count();
-        let run = &points[start..start + len];
-        start += len;
-
-        let first_member = run[0].member;
-        let candidates = &run[..run.partition_point(|p| p.member == first_member)];
-        let survivor = if let [only] = candidates {
-            *only
-        } else {
-            let member_hashes =
-                hashes[first_member].get_or_insert_with(|| point_hashes(first_member));
-            *candidates
-                .iter()
-                .min_by_key(|p| (member_hashes[p.point], p.point))
-                .expect("a run is never empty")
-        };
-        for _ in 1..len {
-            // c[impl metadata.drop-warn]
-            warn!(
-                points = 1,
-                "Dropping a point of {family}: its label set {{{labels}}} is already written"
-            );
-        }
-        points[kept] = survivor;
-        kept += 1;
-    }
-    points.truncate(kept);
-
-    // A stable sort allocates scratch space even for sorted input, which is
-    // what a family of one metric always is.
-    if !points.is_sorted_by_key(|p| p.member) {
-        points.sort_by_key(|p| p.member);
-    }
-}
-
-/// Sorts `points` by label set, and the points of one label set by member.
-/// Points of one member with the same label set stay in any order. All label
-/// sets in `points` agree on their first `skip` bytes.
-///
-/// Points are sorted by 8 bytes of their label set at a time. Before each
-/// round, the bytes that all label sets of the group share are skipped, so a
-/// long common prefix is read once instead of in every comparison.
-fn sort_by_label_set(text: &[u8], points: &mut [LabeledPoint], skip: usize, depth: usize) {
-    /// Rounds after which the rest is sorted by comparing whole label sets.
-    const MAX_DEPTH: usize = 16;
-
-    let Some((first, others)) = points.split_first() else {
-        return;
-    };
-    let after = |p: &LabeledPoint, skip: usize| &text[p.start + skip..p.end];
-    let common = others.iter().fold(after(first, skip).len(), |common, p| {
-        common_prefix_len(&after(first, skip)[..common], after(p, skip))
-    });
-    let skip = skip + common;
-
-    if depth == MAX_DEPTH {
-        points.sort_unstable_by(|a, b| {
-            after(a, skip)
-                .cmp(after(b, skip))
-                .then(a.member.cmp(&b.member))
-        });
-        return;
-    }
-
-    for point in points.iter_mut() {
-        point.key = sort_key(after(point, skip));
-    }
-    // The key pads short label sets with zeros, and label values may hold NUL
-    // bytes. Of two label sets with the same key, the one with fewer bytes
-    // left is the smaller, unless both go on past the key.
-    let group = |p: &LabeledPoint| (p.key, (p.end - p.start - skip).min(8));
-    points.sort_unstable_by_key(|p| (group(p), p.member));
-
-    for run in points.chunk_by_mut(|a, b| group(a) == group(b)) {
-        // Label sets that go on past an equal key are ordered by what follows.
-        let goes_on = group(&run[0]).1 == 8;
-        if run.len() > 1 && goes_on {
-            sort_by_label_set(text, run, skip + 8, depth + 1);
-        }
-    }
-}
-
-/// The number of leading bytes `a` and `b` share, compared 8 bytes at a time.
-fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
-    let len = a.len().min(b.len());
-    let mut i = 0;
-    while i + 8 <= len {
-        let word = |bytes: &[u8]| u64::from_le_bytes(bytes[i..i + 8].try_into().expect("8 bytes"));
-        let difference = word(a) ^ word(b);
-        if difference != 0 {
-            return i + difference.trailing_zeros() as usize / 8;
-        }
-        i += 8;
-    }
-    i + std::iter::zip(&a[i..len], &b[i..len])
-        .take_while(|(x, y)| x == y)
-        .count()
-}
-
-/// The first 8 bytes of `bytes` as a number, padded with zeros. When the keys
-/// of two byte strings differ, they order the strings as their bytes do.
-fn sort_key(bytes: &[u8]) -> u64 {
-    let mut key = [0; 8];
-    let len = bytes.len().min(8);
-    key[..len].copy_from_slice(&bytes[..len]);
-    u64::from_be_bytes(key)
 }
 
 /// Metric data that contributes points to a family.
@@ -1064,35 +924,6 @@ impl FamilyMember for AggregatedMetrics {
     ) -> Result<(), U::Error> {
         with_data_points!(self, data => data.write_labeled(family, points, text))
     }
-}
-
-/// Whether `value` belongs to the `i`-th bucket of `bounds`, which spans the
-/// half-open range `(bounds[i - 1], bounds[i]]`. The index `bounds.len()`
-/// denotes the `+Inf` bucket, holding everything above the last finite bound.
-fn falls_in_bucket<T: Numeric>(bounds: &[f64], i: usize, value: &T) -> bool {
-    let value = value.to_f64();
-    let lower = if i > 0 {
-        bounds[i - 1]
-    } else {
-        f64::NEG_INFINITY
-    };
-    let upper = bounds.get(i).copied().unwrap_or(f64::INFINITY);
-    value > lower && value <= upper
-}
-
-/// Writes the exemplar attached to the `i`-th bucket of `bounds`, if any.
-fn write_bucket_exemplar<'a, E: ExemplarPoint + 'a, U: uWrite>(
-    f: &mut U,
-    bounds: &[f64],
-    i: usize,
-    exemplars: impl IntoIterator<Item = &'a E>,
-) -> Result<(), U::Error> {
-    write_exemplar(
-        f,
-        exemplars
-            .into_iter()
-            .filter(|e| falls_in_bucket(bounds, i, &e.value())),
-    )
 }
 
 #[cfg(test)]
@@ -1507,266 +1338,6 @@ fn keeps_reserved_labels<'a>(
     false
 }
 
-/// Whether `key` is written as the label name `label`, compared without allocating.
-fn sanitizes_to(key: &str, label: &str) -> bool {
-    /// Accepts exactly the text of the label, piece by piece.
-    struct Expect<'l>(&'l str);
-
-    impl uWrite for Expect<'_> {
-        type Error = ();
-
-        fn write_str(&mut self, s: &str) -> Result<(), ()> {
-            self.0 = self.0.strip_prefix(s).ok_or(())?;
-            Ok(())
-        }
-    }
-
-    // Sanitizing keeps a leading letter, and every reserved label starts with one.
-    if key.as_bytes().first() != label.as_bytes().first() {
-        return false;
-    }
-    let mut expect = Expect(label);
-    write_sanitized_name(&mut expect, key, NameKind::AttributeLabel).is_ok() && expect.0.is_empty()
-}
-
-/// Write the attribute string for attrs. Does not write curly braces.
-fn write_attrs<'a, I: Iterator<Item = &'a KeyValue>, U: uWrite>(
-    f: &mut U,
-    attrs: I,
-) -> Result<(), U::Error> {
-    write_attrs_with(f, &mut LabelScratch::default(), attrs)
-}
-
-/// Like [`write_attrs`], but reuses `scratch`, so the per-point writers
-/// allocate nothing new.
-fn write_attrs_with<'a, I: Iterator<Item = &'a KeyValue>, U: uWrite>(
-    f: &mut U,
-    scratch: &mut LabelScratch,
-    attrs: I,
-) -> Result<(), U::Error> {
-    write_attrs_tuple(f, scratch, attrs.map(|kv| (&kv.key, &kv.value)))
-}
-
-/// One label while a label set is written: the byte range of its sanitized
-/// name in [`LabelScratch::names`], its original key and its value.
-type Label<'a> = (usize, usize, &'a Key, &'a Value);
-
-/// Reusable buffers for writing one label set.
-#[derive(Default)]
-struct LabelScratch {
-    /// the sanitized label names, back to back
-    names: String,
-    /// the memory of a `Vec<Label>`, kept empty between label sets
-    labels: Vec<(usize, usize, usize, usize)>,
-}
-
-// The label list reuses the memory of `LabelScratch::labels`, so both
-// element types must have the same layout.
-const _: () = {
-    assert!(size_of::<Label<'static>>() == size_of::<(usize, usize, usize, usize)>());
-    assert!(align_of::<Label<'static>>() == align_of::<(usize, usize, usize, usize)>());
-};
-
-/// Turns an empty `Vec<T>` into an empty `Vec<V>`. The standard library
-/// collects a mapped `vec::IntoIter` in place when `T` and `V` have the same
-/// layout, so the memory is reused and nothing is allocated.
-fn recycle<T, V>(mut vec: Vec<T>) -> Vec<V> {
-    vec.clear();
-    vec.into_iter()
-        .map(|_| -> V { unreachable!("the vector is empty") })
-        .collect()
-}
-
-fn write_attrs_tuple<'a, I: Iterator<Item = (&'a Key, &'a Value)>, U: uWrite>(
-    f: &mut U,
-    scratch: &mut LabelScratch,
-    attrs: I,
-) -> Result<(), U::Error> {
-    // c[impl mattrs.to-labels] - attribute keys/values are emitted as label name/value pairs
-    // Each key is sanitized once into `label_names`; a label holds its byte range there.
-    let label_names = &mut scratch.names;
-    label_names.clear();
-    let mut labels: Vec<Label<'a>> = recycle(std::mem::take(&mut scratch.labels));
-    labels.extend(attrs.map(|(key, value)| {
-        let start = label_names.len();
-        let Ok(()) = write_sanitized_name(label_names, key.as_str(), NameKind::AttributeLabel);
-        (start, label_names.len(), key, value)
-    }));
-    // c[impl mattrs.key-sanitize.collisions] - colliding labels become adjacent,
-    // in the order of their original keys
-    labels.sort_unstable_by(|a, b| {
-        label_names[a.0..a.1]
-            .cmp(&label_names[b.0..b.1])
-            .then_with(|| a.2.cmp(b.2))
-    });
-
-    let mut previous_name: Option<&str> = None;
-    for &(start, end, _, value) in &labels {
-        let name = &label_names[start..end];
-        if previous_name == Some(name) {
-            // c[impl mattrs.key-sanitize.collisions] - values of one label are joined with `;`
-            f.write_char(';')?;
-        } else {
-            if previous_name.is_some() {
-                f.write_str("\",")?;
-            }
-            f.write_str(name)?;
-            f.write_str("=\"")?;
-        }
-        // c[impl mattrs.type-conversion] - non-string values are stringified
-        // c[impl attrs.stringify] - as opentelemetry-sdk's `Value::as_str` does
-        write_escaped_value(f, value)?;
-        previous_name = Some(name);
-    }
-    if previous_name.is_some() {
-        f.write_char('"')?;
-    }
-    scratch.labels = recycle(labels);
-    Ok(())
-}
-
-/// Calculates a hash of the [`KeyValue`] pairs which is invariant under reordering of the [`KeyValue`]s within the [`Iterator`].
-fn hash_attrs<'a, I: Iterator<Item = &'a KeyValue>>(attrs: I) -> u64 {
-    let mut hash = 0;
-    for kv in attrs {
-        let mut hasher = DefaultHasher::default();
-        hasher.write(kv.key.as_str().as_bytes());
-        // The type tells apart values that stringify alike, such as 1 and "1".
-        hasher.write_u8(value_type(&kv.value));
-        write!(HashWriter(&mut hasher), "{}", kv.value).expect("hashing cannot fail");
-        hash ^= hasher.finish(); // XOR to be order-invariant
-    }
-    hash
-}
-
-/// Feeds formatted text into a hasher. [`DefaultHasher::write`] hashes a stream
-/// of bytes, so the pieces hash like the whole text.
-struct HashWriter<'h>(&'h mut DefaultHasher);
-
-impl Write for HashWriter<'_> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        self.0.write(s.as_bytes());
-        Ok(())
-    }
-}
-
-/// A number for each type of attribute value.
-fn value_type(value: &Value) -> u8 {
-    match value {
-        Value::Bool(_) => 0,
-        Value::I64(_) => 1,
-        Value::F64(_) => 2,
-        Value::String(_) => 3,
-        Value::Array(Array::Bool(_)) => 4,
-        Value::Array(Array::I64(_)) => 5,
-        Value::Array(Array::F64(_)) => 6,
-        Value::Array(Array::String(_)) => 7,
-        _ => 8,
-    }
-}
-
-/// Writes `value` escaped, as [`Value::as_str`] renders it, but without
-/// allocating: non-string values are formatted straight into `f`.
-fn write_escaped_value<U: uWrite>(f: &mut U, value: &Value) -> Result<(), U::Error> {
-    if let Value::String(value) = value {
-        return write_escaped(f, value.as_str());
-    }
-    let mut writer = EscapingWriter { f, error: None };
-    match write!(writer, "{value}") {
-        Ok(()) => Ok(()),
-        Err(std::fmt::Error) => Err(writer.error.expect("only the output can fail")),
-    }
-}
-
-/// Escapes formatted text into a [`uWrite`]. It keeps the output's error,
-/// because [`Write`] can only report [`std::fmt::Error`].
-struct EscapingWriter<'f, U: uWrite> {
-    f: &'f mut U,
-    error: Option<U::Error>,
-}
-
-impl<U: uWrite> Write for EscapingWriter<'_, U> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        write_escaped(self.f, s).map_err(|error| {
-            self.error = Some(error);
-            std::fmt::Error
-        })
-    }
-}
-
-/// Writes to `f` the contents of `value` as an escaped string. Does not put quotes around the value.
-/// The chars to escape are `\`, `"` and `\n`.
-// om[impl escaping.chars]
-fn write_escaped<U: uWrite>(f: &mut U, value: &str) -> Result<(), U::Error> {
-    #[inline]
-    fn next_escape_char(bytes: &[u8]) -> Option<usize> {
-        memchr::memchr3(b'\\', b'"', b'\n', bytes)
-    }
-
-    let mut bytes = value.as_bytes();
-
-    while let Some(next_escape) = next_escape_char(bytes) {
-        let (head, tail) = bytes.split_at(next_escape);
-        f.write_str(str::from_utf8(head).expect("escapable chars should be on a char boundary"))?;
-        match tail[0] {
-            b'\\' => f.write_str("\\\\"),
-            b'"' => f.write_str("\\\""),
-            b'\n' => f.write_str("\\n"),
-            _ => unreachable!("next_escape_char should find one of the 3 escapable chars"),
-        }?;
-        bytes = &tail[1..];
-    }
-    // om[impl strings.utf8] - strings are written as valid UTF-8
-    f.write_str(str::from_utf8(bytes).expect("escaped string should be valid utf-8"))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NameKind {
-    Metric,
-    AttributeLabel,
-}
-
-/// Write `name` as an OpenMetrics metrics name, replacing any illegal characters with underscore according to the
-/// [spec](https://github.com/open-telemetry/opentelemetry-specification/blob/v1.45.0/specification/compatibility/prometheus_and_openmetrics.md#metric-metadata-1).
-// c[impl metadata.name-sanitize]
-// c[impl mattrs.key-sanitize]
-// om[related labels.reserved] - a leading illegal character is sanitized to
-// a `_` prefix (e.g. `1.label` -> `_1_label`), producing an underscore-leading
-// label name that technically violates om[labels.reserved]; accepted deviation,
-// matching the opentelemetry-prometheus reference impl.
-fn write_sanitized_name<U: uWrite>(f: &mut U, name: &str, kind: NameKind) -> Result<(), U::Error> {
-    // Multiple consecutive `_` characters MUST be replaced with a single `_` character
-    let mut previous_was_underscore = false;
-    // The name must not start with a digit
-    if name.starts_with(|c: char| c.is_ascii_digit()) {
-        f.write_char('_')?;
-        previous_was_underscore = true;
-    }
-    // Allowed characters are written in runs, one `write_str` per run. They are
-    // all ASCII, so scanning bytes is enough: the bytes of a multi-byte char are
-    // all invalid and collapse into one `_`, and every run boundary sits next to
-    // an ASCII byte, which is always a char boundary.
-    let mut run_start = 0;
-    for (i, &byte) in name.as_bytes().iter().enumerate() {
-        // Allowed characters are `a-z A-Z 0-9 : _`, except for ':' in labels
-        // Invalid characters in the metric name MUST be replaced with the `_` character.
-        if byte.is_ascii_alphanumeric() || (byte == b':' && kind == NameKind::Metric) {
-            if previous_was_underscore {
-                run_start = i;
-                previous_was_underscore = false;
-            }
-        } else if !previous_was_underscore {
-            f.write_str(&name[run_start..i])?;
-            f.write_char('_')?;
-            previous_was_underscore = true;
-        }
-    }
-    if !previous_was_underscore {
-        f.write_str(&name[run_start..])?;
-    }
-    Ok(())
-}
-
 /// Get a [`Display`] implementation which shows [`SystemTime`] as a unix timestamp in float seconds.
 // om[impl timestamp.unix]
 fn to_timestamp(time: SystemTime) -> impl uDisplay {
@@ -1775,89 +1346,4 @@ fn to_timestamp(time: SystemTime) -> impl uDisplay {
         .expect("Time went backwards")
         .as_secs_f64();
     ts.fast_display()
-}
-
-/// The parts of an exemplar that the OpenMetrics encoding reads.
-///
-/// The SDK's [`Exemplar`] has no public constructor, so this is what lets a
-/// test supply one of its own.
-pub(crate) trait ExemplarPoint {
-    type Value: Numeric + Copy;
-
-    fn value(&self) -> Self::Value;
-    fn time(&self) -> SystemTime;
-    fn trace_id(&self) -> [u8; 16];
-    fn span_id(&self) -> [u8; 8];
-    fn filtered_attributes(&self) -> impl Iterator<Item = &KeyValue>;
-}
-
-// Plain forwarding, reachable only through exemplars the SDK produces - and
-// this SDK produces none, leaving every mutant here unkillable.
-#[cfg_attr(test, mutants::skip)]
-impl<T: Numeric + Copy> ExemplarPoint for Exemplar<T> {
-    type Value = T;
-
-    fn value(&self) -> T {
-        self.value
-    }
-
-    fn time(&self) -> SystemTime {
-        Exemplar::time(self)
-    }
-
-    fn trace_id(&self) -> [u8; 16] {
-        *Exemplar::trace_id(self)
-    }
-
-    fn span_id(&self) -> [u8; 8] {
-        *Exemplar::span_id(self)
-    }
-
-    fn filtered_attributes(&self) -> impl Iterator<Item = &KeyValue> {
-        Exemplar::filtered_attributes(self)
-    }
-}
-
-fn write_exemplar<'a, E: ExemplarPoint + 'a, U: uWrite>(
-    f: &mut U,
-    exemplars: impl IntoIterator<Item = &'a E>,
-) -> Result<(), U::Error> {
-    // Write at most one exemplar, preferring the most recent measurement.
-    let Some(exemplar) = exemplars.into_iter().max_by_key(|e| e.time()) else {
-        return Ok(());
-    };
-    // Build the exemplar's label set: the ids (only when a trace context was
-    // active; the SDK zeroes them otherwise) plus the filtered attributes.
-    // c[impl exemplar.trace-span-ids]
-    let mut labels = Vec::new();
-    let trace_id = exemplar.trace_id();
-    if trace_id != [0; 16] {
-        labels.push(KeyValue::new(
-            "trace_id",
-            TraceId::from_bytes(trace_id).to_string(),
-        ));
-    }
-    let span_id = exemplar.span_id();
-    if span_id != [0; 8] {
-        labels.push(KeyValue::new(
-            "span_id",
-            SpanId::from_bytes(span_id).to_string(),
-        ));
-    }
-    // c[impl exemplar.filtered-attrs] - filtered attributes become exemplar labels
-    labels.extend(exemplar.filtered_attributes().cloned());
-
-    // OpenMetrics exemplar: ` # {labels} value [timestamp]`
-    // om[impl exemplars.structure] - an exemplar is a label set + value (+ timestamp)
-    uwrite!(f, " # {{")?;
-    // om[impl exemplars.empty-labelset] - an empty label set is rendered as `{}`
-    write_attrs(f, labels.iter())?;
-    // c[impl exemplar.timestamp] - timestamps are added as timestamps
-    uwrite!(
-        f,
-        "}} {} {}",
-        exemplar.value().fast_display(),
-        to_timestamp(exemplar.time()),
-    )?;
-    Ok(())
 }

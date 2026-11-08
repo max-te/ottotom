@@ -15,6 +15,9 @@ use ottotom_testsupport::resource_metrics::{
 use ottotom_testsupport::timestamps::ExtractTimestamps;
 use ufmt::uwrite;
 
+use super::exemplar::{ExemplarPoint, falls_in_bucket};
+use super::label_sets::sort_by_label_set;
+use super::labels::{write_attrs, write_escaped_value};
 use super::*;
 
 fn strip_otel_scope_name(s: &str) -> String {
