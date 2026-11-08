@@ -41,20 +41,39 @@ pub(crate) fn canonical_display(value: f64) -> impl uDisplay + Copy {
 struct CanonicalDisplay(f64);
 
 impl uDisplay for CanonicalDisplay {
+    /// Writes the number as Go's shortest `%g` does: with an exponent if the
+    /// decimal exponent is below -4 or at least 6, in fixed notation otherwise.
     fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
     where
         W: ufmt::uWrite + ?Sized,
     {
-        // In this range, and for non-finite values, ryu already writes the
-        // canonical form: fixed notation with at least one decimal.
-        if !self.0.is_finite() || self.0 == 0.0 || (1e-4..1e6).contains(&self.0.abs()) {
+        if !self.0.is_finite() {
             return RyuDisplay(self.0).fmt(f);
         }
         let mut buffer = ryu::Buffer::new();
-        let shortest = Shortest::read(buffer.format_finite(self.0));
-        let mut out = Out::default();
-        shortest.write_canonical(&mut out);
-        f.write_str(out.as_str())
+        let text = buffer.format_finite(self.0);
+        let shortest = Shortest::read(text);
+        let digits = shortest.digits();
+        let exponent = shortest.point - 1;
+        // ryu's fixed notation with at least one decimal is canonical.
+        if digits.is_empty() || (-4..6).contains(&exponent) {
+            return f.write_str(text);
+        }
+        if shortest.negative {
+            f.write_char('-')?;
+        }
+        let (first, rest) = digits.split_at(1);
+        f.write_str(first)?;
+        if !rest.is_empty() {
+            f.write_char('.')?;
+            f.write_str(rest)?;
+        }
+        f.write_str(if exponent < 0 { "e-" } else { "e+" })?;
+        let exponent = exponent.unsigned_abs();
+        if exponent < 10 {
+            f.write_char('0')?;
+        }
+        exponent.fmt(f)
     }
 }
 
@@ -72,43 +91,32 @@ impl Shortest {
     /// Reads ryu's output, which is `[-]` followed by `DDD.0`, `DD.DD`,
     /// `0.000DD`, `DeE` or `D.DDDeE`, where the exponent `E` may be negative.
     fn read(text: &str) -> Self {
-        let text = text.as_bytes();
-        let (negative, text) = match text.split_first() {
-            Some((b'-', rest)) => (true, rest),
-            _ => (false, text),
+        let (negative, unsigned) = match text.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, text),
         };
-        let (mantissa, exponent) = match text.iter().position(|&b| b == b'e') {
-            Some(e) => {
-                let exponent = std::str::from_utf8(&text[e + 1..])
-                    .ok()
-                    .and_then(|exponent| exponent.parse::<i32>().ok())
-                    .expect("ryu writes a decimal exponent");
-                (&text[..e], exponent)
-            }
-            None => (text, 0),
+        let (mantissa, exponent) = match unsigned.split_once('e') {
+            Some((mantissa, exponent)) => (
+                mantissa,
+                exponent.parse().expect("ryu writes a decimal exponent"),
+            ),
+            None => (unsigned, 0),
         };
+        let (integer, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+        let integer_len = i32::try_from(integer.len()).expect("ryu writes at most 17 digits");
 
         let mut shortest = Shortest {
             negative,
             digits: [0; 24],
             len: 0,
-            point: exponent,
+            point: exponent + integer_len,
         };
-        let mut after_point = false;
-        for &byte in mantissa {
-            if byte == b'.' {
-                after_point = true;
-            } else if shortest.len == 0 && byte == b'0' {
-                // A leading zero after the point moves the point right.
-                if after_point {
-                    shortest.point -= 1;
-                }
+        for digit in integer.bytes().chain(fraction.bytes()) {
+            if shortest.len == 0 && digit == b'0' {
+                shortest.point -= 1;
             } else {
-                shortest.digits[shortest.len] = byte;
+                shortest.digits[shortest.len] = digit;
                 shortest.len += 1;
-                if !after_point {
-                    shortest.point += 1;
-                }
             }
         }
         while shortest.len > 0 && shortest.digits[shortest.len - 1] == b'0' {
@@ -117,82 +125,8 @@ impl Shortest {
         shortest
     }
 
-    /// Writes the number as Go's shortest `%g` does: with an exponent if the
-    /// decimal exponent is below -4 or at least 6, in fixed notation otherwise.
-    fn write_canonical(&self, out: &mut Out) {
-        if self.negative {
-            out.push(b'-');
-        }
-        let digits = &self.digits[..self.len];
-        if digits.is_empty() {
-            out.extend(b"0.0");
-            return;
-        }
-        let exponent = self.point - 1;
-        if !(-4..6).contains(&exponent) {
-            out.push(digits[0]);
-            if digits.len() > 1 {
-                out.push(b'.');
-                out.extend(&digits[1..]);
-            }
-            out.push(b'e');
-            out.push(if exponent < 0 { b'-' } else { b'+' });
-            let exponent = exponent.unsigned_abs();
-            if exponent >= 100 {
-                out.push(digit(exponent / 100));
-            }
-            out.push(digit(exponent / 10 % 10));
-            out.push(digit(exponent % 10));
-            return;
-        }
-        // `point` is between -3 and 6 here.
-        let point = usize::try_from(self.point.max(0)).expect("the point is not negative");
-        if self.point <= 0 {
-            out.extend(b"0.");
-            for _ in self.point..0 {
-                out.push(b'0');
-            }
-            out.extend(digits);
-        } else if point >= digits.len() {
-            out.extend(digits);
-            for _ in digits.len()..point {
-                out.push(b'0');
-            }
-            out.extend(b".0");
-        } else {
-            out.extend(&digits[..point]);
-            out.push(b'.');
-            out.extend(&digits[point..]);
-        }
-    }
-}
-
-/// The ASCII digit for `value`, which is below 10.
-fn digit(value: u32) -> u8 {
-    b'0' + u8::try_from(value).expect("a single digit")
-}
-
-/// A stack buffer for one canonical number, which takes at most 24 bytes,
-/// as in `-1.2345678901234567e-308`.
-#[derive(Default)]
-struct Out {
-    bytes: [u8; 32],
-    len: usize,
-}
-
-impl Out {
-    fn push(&mut self, byte: u8) {
-        self.bytes[self.len] = byte;
-        self.len += 1;
-    }
-
-    fn extend(&mut self, bytes: &[u8]) {
-        self.bytes[self.len..self.len + bytes.len()].copy_from_slice(bytes);
-        self.len += bytes.len();
-    }
-
-    fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.bytes[..self.len]).expect("only ASCII is written")
+    fn digits(&self) -> &str {
+        std::str::from_utf8(&self.digits[..self.len]).expect("ryu writes ASCII digits")
     }
 }
 
