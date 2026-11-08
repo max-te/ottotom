@@ -13,5 +13,5 @@ opentelemetry_sdk = { workspace = true, features = ["experimental_metrics_custom
 ephyra = "0.0.1"
 
 [dev-dependencies]
-openmetrics-parser = "0.4.4"
+openmetrics-parser = "0.5.1"
 tracing = "0.1.44"
