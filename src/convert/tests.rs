@@ -10,7 +10,7 @@ use ottotom_testsupport::metric_data::{
     make_u64_gauge_metric_handle, make_u64_histogram_metric,
 };
 use ottotom_testsupport::resource_metrics::{
-    collect_from_scopes, collect_metrics, make_test_metrics,
+    collect_from_scopes, collect_metrics, collect_metrics_with_temporality, make_test_metrics,
 };
 use ottotom_testsupport::timestamps::ExtractTimestamps;
 use ufmt::uwrite;
@@ -883,6 +883,36 @@ fn test_drop_exponential_histogram() {
         .write_as_openmetrics(&mut output)
         .unwrap();
     assert!(!output.contains("my_exphist"));
+}
+
+#[test]
+// c[verify sum.drop]
+// c[verify histogram.delta]
+fn test_drop_delta_temporality() {
+    let metrics = collect_metrics_with_temporality(Temporality::Delta, |meter| {
+        meter.u64_counter("my_counter").build().add(1, &[]);
+        meter.i64_up_down_counter("my_updown").build().add(-1, &[]);
+        meter.f64_histogram("my_histogram").build().record(1.0, &[]);
+        meter.f64_gauge("my_gauge").build().record(1.0, &[]);
+    });
+    let collected: Vec<&str> = metrics
+        .scope_metrics()
+        .flat_map(ScopeMetrics::metrics)
+        .map(Metric::name)
+        .collect();
+    assert_eq!(
+        collected.len(),
+        4,
+        "the SDK dropped a metric: {collected:?}"
+    );
+
+    let mut output = String::new();
+    metrics.write_as_openmetrics(&mut output).unwrap();
+
+    for dropped in ["my_counter", "my_updown", "my_histogram"] {
+        assert!(!output.contains(dropped), "{dropped} in:\n{output}");
+    }
+    assert!(output.contains("my_gauge"), "my_gauge missing:\n{output}");
 }
 
 #[test]

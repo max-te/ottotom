@@ -2,9 +2,9 @@ use crate::reader::TestMetricsReader;
 use opentelemetry::metrics::{Meter, MeterProvider};
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::reader::MetricReader;
+use opentelemetry_sdk::metrics::{SdkMeterProvider, Temporality};
 
 /// Builds a meter provider fed by a manual reader and collects whatever the
 /// `record` closure has instrumented into a [`ResourceMetrics`] snapshot.
@@ -13,7 +13,16 @@ use opentelemetry_sdk::metrics::reader::MetricReader;
 /// independent of the environment (`OTEL_RESOURCE_ATTRIBUTES`), keeping test
 /// and benchmark measurements comparable.
 pub fn collect_metrics(record: impl FnOnce(&Meter)) -> ResourceMetrics {
-    let reader = TestMetricsReader::default();
+    collect_metrics_with_temporality(Temporality::Cumulative, record)
+}
+
+/// Like [`collect_metrics`], but the reader requests `temporality` for every
+/// instrument kind.
+pub fn collect_metrics_with_temporality(
+    temporality: Temporality,
+    record: impl FnOnce(&Meter),
+) -> ResourceMetrics {
+    let reader = TestMetricsReader::with_temporality(temporality);
     let meter_provider = SdkMeterProvider::builder()
         .with_resource(
             Resource::builder_empty()

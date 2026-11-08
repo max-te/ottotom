@@ -8,13 +8,22 @@ use opentelemetry_sdk::metrics::{InstrumentKind, ManualReader, Pipeline, Tempora
 #[derive(Debug, Clone)]
 pub struct TestMetricsReader {
     inner: Arc<ManualReader>,
+    temporality: Temporality,
+}
+
+impl TestMetricsReader {
+    /// Creates a reader that requests `temporality` for every instrument kind.
+    pub fn with_temporality(temporality: Temporality) -> Self {
+        Self {
+            inner: Arc::new(ManualReader::builder().build()),
+            temporality,
+        }
+    }
 }
 
 impl Default for TestMetricsReader {
     fn default() -> Self {
-        Self {
-            inner: Arc::new(ManualReader::builder().build()),
-        }
+        Self::with_temporality(Temporality::Cumulative)
     }
 }
 
@@ -40,6 +49,6 @@ impl MetricReader for TestMetricsReader {
     }
 
     fn temporality(&self, _kind: InstrumentKind) -> Temporality {
-        Temporality::Cumulative
+        self.temporality
     }
 }
