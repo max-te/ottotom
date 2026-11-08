@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use insta::assert_snapshot;
@@ -177,6 +178,31 @@ fn test_hash_attrs() {
     let hash3 = hash_attrs(attrs3.iter());
 
     assert_ne!(hash1, hash3);
+}
+
+#[test]
+fn test_hash_attrs_tells_apart_value_types() {
+    let alike_groups: [Vec<Value>; 3] = [
+        vec![Value::I64(1), Value::F64(1.0), Value::from("1")],
+        vec![Value::Bool(true), Value::from("true")],
+        vec![
+            Value::Array(Array::Bool(vec![])),
+            Value::Array(Array::I64(vec![])),
+            Value::Array(Array::F64(vec![])),
+            Value::Array(Array::String(vec![])),
+            Value::from("[]"),
+        ],
+    ];
+    for values in alike_groups {
+        let texts: HashSet<String> = values.iter().map(Value::to_string).collect();
+        assert_eq!(texts.len(), 1, "values should display alike: {texts:?}");
+
+        let hashes: HashSet<u64> = values
+            .iter()
+            .map(|value| hash_attrs([KeyValue::new("key", value.clone())].iter()))
+            .collect();
+        assert_eq!(hashes.len(), values.len(), "hashes collide: {values:?}");
+    }
 }
 
 #[test]
