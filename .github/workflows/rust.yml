@@ -93,11 +93,16 @@ jobs:
       run: git checkout -f "${{ steps.baseline.outputs.ref }}"
     - name: Build and export baseline
       if: steps.baseline.outputs.ref != ''
+      # A baseline may fail to build or be incompatible, e.g. across a
+      # tango-bench upgrade. The comparison step then runs solo.
       continue-on-error: true
       run: |
-        cargo bench --bench converter --no-run
+        set -o pipefail
+        # Cargo reports the path, because the build directory layout is not stable.
+        binary=$(cargo bench --bench converter --no-run --message-format=json \
+          | jq -r 'select(.reason == "compiler-artifact" and .target.name == "converter" and .executable != null) | .executable')
         mkdir -p target/benchmarks
-        cp target/release/deps/converter-???????????????? target/benchmarks/converter
+        cp "$binary" target/benchmarks/converter
     - name: Restore PR code
       if: steps.baseline.outputs.ref != ''
       run: git checkout -f "$PR_HEAD"
